@@ -24,6 +24,57 @@ npm run dev
 
 개발 서버는 기본적으로 `http://127.0.0.1:5173`에서 실행됩니다.
 
+## 환경변수
+
+로컬에서 실제 키와 비밀번호는 Git에 올리지 않는 파일에 넣습니다.
+
+- `.env.local`: 프론트 전용. 브라우저에 노출되어도 되는 `VITE_` 값만 입력합니다.
+- `backend/.env`: FastAPI 백엔드 전용. RDS, S3, AWS 키 같은 비밀값을 입력합니다.
+- `.env.local.example`, `backend/.env.example`: 공유 가능한 예시 파일입니다.
+
+프론트 기본값:
+
+```env
+VITE_API_BASE_URL=http://127.0.0.1:8000
+```
+
+현재 배포 환경에서는 Vercel 프론트가 CloudFront를 통해 ECS API를 호출하도록 아래 값을 사용합니다.
+
+```env
+VITE_API_BASE_URL=https://d3t1pbvtir1lj.cloudfront.net
+```
+
+백엔드는 RDS 접속 정보를 한 줄 `DATABASE_URL`로 두지 않고 아래처럼 나눠 관리합니다.
+
+```env
+DATABASE_SECRET_ID=
+DB_HOST=
+DB_PORT=5432
+DB_NAME=
+DB_SSLMODE=require
+AWS_REGION=ap-northeast-2
+AWS_USE_IAM_ROLE=true
+S3_BUCKET_NAME=
+```
+
+S3는 같은 버킷을 공유하더라도 `user-reports/`, `business-verifications/`, `credentials/`처럼 prefix를 분리해서 사용합니다.
+
+## 배포
+
+- Frontend: Vercel
+  - Production URL: `https://consultant-web-rose.vercel.app`
+  - Framework: Vite
+  - Build command: `npm run build`
+  - Output directory: `dist`
+- Backend API: AWS ECS Fargate
+  - Cluster: `aura-backend-dev`
+  - Service: `consultant-web-api`
+  - Container port: `8000`
+  - External API base URL: `https://d3t1pbvtir1lj.cloudfront.net`
+  - Manager API health check: `https://d3t1pbvtir1lj.cloudfront.net/api/manager/status`
+
+Vercel에는 프론트만 배포합니다. `backend/`는 ECS 배포용 코드라 `.vercelignore`에서 제외합니다.
+
 프로덕션 빌드 확인:
 
 ```bash
@@ -77,4 +128,4 @@ src/
 - 업체 인증: 사업자등록증 OCR, 대표자 확인, 정산 계좌 검증, 관리자 승인 플로우
 - 채팅: FastAPI WebSocket, Firebase, Sendbird, Stream 중 선택 가능
 - 전화/SMS: Twilio, AWS Pinpoint, Naver Cloud SENS action API로 연결
-- 배포: 정적 프론트는 Vercel/S3+CloudFront, API는 AWS ECS/App Runner/Lambda 중 운영 규모에 맞게 선택
+- 배포: 정적 프론트는 Vercel, API는 AWS ECS Fargate 기준으로 운영하고 필요 시 도메인과 HTTPS 인증서를 별도로 연결
