@@ -11,8 +11,8 @@ export function LoginPage() {
   const { login } = useAuth();
   const [entryMode, setEntryMode] = useState<EntryMode>("partner");
   const [adminEmail, setAdminEmail] = useState("admin@aura.example");
-  const [partnerEmail, setPartnerEmail] = useState("partner@aura.example");
-  const [password, setPassword] = useState("AuraTemp!2026");
+  const [partnerEmail, setPartnerEmail] = useState("seah.kim@aura-partner.local");
+  const [password, setPassword] = useState("AuraSea!2026");
   const [error, setError] = useState("");
   const [isSubmitting, setSubmitting] = useState(false);
 
@@ -25,7 +25,7 @@ export function LoginPage() {
       await login({
         email: entryMode === "admin" ? adminEmail : partnerEmail,
         password,
-        role: entryMode === "admin" ? "admin" : "business_manager",
+        role: entryMode === "admin" ? "admin" : "expert",
       });
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "로그인에 실패했습니다.");
@@ -90,7 +90,7 @@ export function LoginPage() {
                 <KeyRound size={18} />
                 <div>
                   <strong>승인 전 이메일로 로그인하면 심사 상태 화면으로 이동합니다</strong>
-                  <span>승인 완료 계정은 첫 로그인 후 비밀번호 변경 예정 UI가 표시됩니다.</span>
+                  <span>등록된 프리랜서별 발급 계정으로 로그인하면 실제 앱 예약·고객·채팅 데이터가 표시됩니다.</span>
                 </div>
               </div>
             ) : null}
@@ -101,7 +101,7 @@ export function LoginPage() {
           </form>
         )}
         <div className="login-footer">
-          실서비스에서는 관리자 SSO, 파트너 계정 발급, 첫 로그인 비밀번호 변경, 이메일/SMS 전달, 권한별 메뉴 제어로 연결됩니다.
+          파트너 화면은 백엔드 예약·고객·채팅·공유 리포트 API와 연결됩니다. 관리자와 입점 심사는 데모 운영 화면으로 유지됩니다.
         </div>
       </section>
     </main>

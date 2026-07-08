@@ -1096,6 +1096,20 @@ a {
   font-size: 11px;
 }
 
+.realtime-toast {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #b7dccd;
+  border-radius: 8px;
+  background: #edf8f3;
+  color: #116145;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .composer {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -1148,6 +1162,58 @@ a {
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.report-item-button {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.report-item-button.is-active,
+.report-item-button:hover {
+  border-color: var(--primary);
+  background: #f4fbf8;
+}
+
+.report-item-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.report-detail-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #c9ded6;
+  border-radius: 8px;
+  background: #f8fcfa;
+}
+
+.report-detail-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.report-detail-list div {
+  display: grid;
+  gap: 3px;
+}
+
+.report-detail-list dt {
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.report-detail-list dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .completion-layout {

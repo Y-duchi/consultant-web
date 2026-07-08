@@ -64,6 +64,154 @@ const dateKey = (iso: string) => {
   return `${year}-${month}-${day}`;
 };
 
+const PARTNER_SESSION_TOKEN_KEY = "consultant-web-partner-session-token";
+
+type PartnerApiEnvelope<T> = {
+  data: T | null;
+  error?: {
+    message?: string;
+  } | null;
+};
+
+export interface SharedReportDetail {
+  report: SharedReport;
+  kind: "analysis" | "feedback";
+  detail: Record<string, unknown>;
+}
+
+function getPartnerApiBaseUrl() {
+  const raw = import.meta.env.VITE_API_BASE_URL?.trim() || "http://127.0.0.1:8000";
+  const trimmed = raw.replace(/\/+$/, "");
+  return trimmed.endsWith("/api") ? `${trimmed}/consulting/partner` : `${trimmed}/api/consulting/partner`;
+}
+
+export function getPartnerSessionToken() {
+  return window.localStorage.getItem(PARTNER_SESSION_TOKEN_KEY);
+}
+
+function setPartnerSessionToken(token: string) {
+  window.localStorage.setItem(PARTNER_SESSION_TOKEN_KEY, token);
+}
+
+export function clearPartnerSession() {
+  window.localStorage.removeItem(PARTNER_SESSION_TOKEN_KEY);
+}
+
+function shouldUsePartnerApi(user?: AuthUser) {
+  return Boolean(user && !isAdminUser(user) && getPartnerSessionToken());
+}
+
+function buildPartnerPath(path: string, params: object = {}) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params as Record<string, unknown>)) {
+    if (value === undefined || value === null || value === "") continue;
+    query.set(key, String(value));
+  }
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const queryString = query.toString();
+  return queryString ? `${normalizedPath}?${queryString}` : normalizedPath;
+}
+
+async function requestPartnerJson<T>(
+  path: string,
+  init: RequestInit = {},
+  options: { auth?: boolean } = {},
+): Promise<T> {
+  const headers = new Headers(init.headers);
+  const needsAuth = options.auth !== false;
+  const token = getPartnerSessionToken();
+  if (needsAuth) {
+    if (!token) {
+      throw new Error("파트너 세션이 없습니다. 다시 로그인해 주세요.");
+    }
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  if (init.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  const response = await fetch(`${getPartnerApiBaseUrl()}${path}`, {
+    ...init,
+    headers,
+  });
+  const envelope = (await response.json().catch(() => null)) as PartnerApiEnvelope<T> | null;
+  if (!response.ok || envelope?.error) {
+    throw new Error(envelope?.error?.message || "파트너 백엔드 요청에 실패했습니다.");
+  }
+  if (!envelope || envelope.data === null) {
+    throw new Error("파트너 백엔드 응답이 비어 있습니다.");
+  }
+  return envelope.data;
+}
+
+function upsertById<T extends { id: string }>(source: T[], records: T[]) {
+  const byId = new Map(source.map((item) => [item.id, item] as const));
+  for (const record of records) {
+    byId.set(record.id, record);
+  }
+  return Array.from(byId.values());
+}
+
+function rememberBookings(records: Booking[]) {
+  bookings = upsertById(bookings, records);
+}
+
+function rememberCustomers(records: Customer[]) {
+  customers = upsertById(customers, records);
+}
+
+function rememberExperts(records: Expert[]) {
+  experts = upsertById(experts, records);
+}
+
+function rememberSharedReports(records: SharedReport[]) {
+  sharedReports = upsertById(sharedReports, records);
+}
+
+function rememberBookingDetail(detail: BookingDetail) {
+  rememberBookings([detail.booking]);
+  rememberCustomers([detail.customer]);
+  rememberExperts([detail.expert]);
+  rememberSharedReports(detail.sharedReports);
+  if (detail.consultationSummary) {
+    consultationSummaries = upsertById(consultationSummaries, [detail.consultationSummary]);
+  }
+  if (detail.review) {
+    reviews = upsertById(reviews, [detail.review]);
+  }
+}
+
+function rememberCustomerDetail(detail: CustomerDetail) {
+  rememberCustomers([detail.customer]);
+  rememberBookings(detail.bookings);
+  rememberSharedReports(detail.sharedReports);
+  consultationSummaries = upsertById(consultationSummaries, detail.consultationSummaries);
+  reviews = upsertById(reviews, detail.reviews);
+}
+
+function rememberChatDetail(detail: ChatThreadDetail) {
+  chatThreads = upsertById(chatThreads, [detail.thread]);
+  rememberCustomers([detail.customer]);
+  rememberExperts([detail.expert]);
+  if (detail.booking) {
+    rememberBookings([detail.booking]);
+  }
+  rememberSharedReports(detail.sharedReports);
+  chatMessages = [
+    ...chatMessages.filter((message) => message.threadId !== detail.thread.id),
+    ...detail.messages,
+  ];
+}
+
+async function rememberPartnerWorkspaceLookups() {
+  const [customersData, expertsData] = await Promise.all([
+    requestPartnerJson<{ customers: Customer[] }>("/customers"),
+    requestPartnerJson<{ experts: Expert[] }>("/experts"),
+  ]);
+  rememberCustomers(customersData.customers);
+  rememberExperts(expertsData.experts);
+}
+
 let attachments = clone(initialAttachments);
 let availabilitySlots = clone(initialAvailabilitySlots);
 let bookings = clone(initialBookings);
@@ -217,42 +365,20 @@ export async function mockLogin(request: LoginRequest): Promise<AuthUser> {
     };
   }
 
-  const account = partnerAccounts.find((item) => item.email.toLowerCase() === email && item.status !== "suspended");
-  if (account) {
-    const application = partnerApplications.find((item) => item.id === account.applicationId);
-    const accountExpert = experts.find((item) => item.businessId === account.businessId);
-    return {
-      id: account.id,
-      name: application?.businessName ?? businessProfiles.find((business) => business.id === account.businessId)?.name ?? "AURA 파트너",
-      email: account.email,
-      role: account.role,
-      expertId: account.role === "expert" ? accountExpert?.id : undefined,
-      businessId: account.businessId,
-      workspaceScope: account.workspaceScope,
-      partnerType: application?.partnerType ?? "business",
-      applicationId: account.applicationId,
-      applicationStatus: application?.status ?? "approved",
-      accountId: account.id,
-      passwordChangeRequired: account.passwordChangeRequired,
-    };
-  }
+  const partnerLogin = await requestPartnerJson<{ token: string; user: AuthUser }>(
+    "/login",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        email,
+        password: request.password ?? "",
+      }),
+    },
+    { auth: false },
+  );
+  setPartnerSessionToken(partnerLogin.token);
+  return partnerLogin.user;
 
-  const application = partnerApplications.find((item) => item.email.toLowerCase() === email);
-  if (application) {
-    return {
-      id: `application-user-${application.id}`,
-      name: application.businessName,
-      email: application.email,
-      role: application.partnerType === "freelancer" ? "expert" : "business_manager",
-      businessId: application.businessId ?? `pending-${application.id}`,
-      workspaceScope: "business_operations",
-      partnerType: application.partnerType,
-      applicationId: application.id,
-      applicationStatus: application.status,
-    };
-  }
-
-  throw new Error("승인된 파트너 계정 또는 제출된 입점 신청을 찾을 수 없습니다.");
 }
 
 export async function completePartnerPasswordChange(accountId: string, nextPassword: string): Promise<void> {
@@ -454,6 +580,14 @@ export async function getAdminBookings(filters: BookingFilters = {}): Promise<Bo
 }
 
 export async function getDashboardSummary(user?: AuthUser): Promise<DashboardSummary> {
+  if (shouldUsePartnerApi(user)) {
+    const [data] = await Promise.all([
+      requestPartnerJson<{ summary: DashboardSummary }>("/dashboard"),
+      rememberPartnerWorkspaceLookups(),
+    ]);
+    rememberBookings(data.summary.todayTimeline);
+    return clone(data.summary);
+  }
   await delay();
   const scopedBookings = applyUserScope(bookings, user);
   const scopedBusiness = businessProfiles.find((business) => business.id === user?.businessId) ?? businessProfiles[0];
@@ -555,6 +689,14 @@ export async function getDashboardSummary(user?: AuthUser): Promise<DashboardSum
 }
 
 export async function getBookings(filters: BookingFilters = {}, user?: AuthUser): Promise<Booking[]> {
+  if (shouldUsePartnerApi(user)) {
+    const [data] = await Promise.all([
+      requestPartnerJson<{ bookings: Booking[] }>(buildPartnerPath("/bookings", filters)),
+      rememberPartnerWorkspaceLookups(),
+    ]);
+    rememberBookings(data.bookings);
+    return clone(data.bookings);
+  }
   await delay();
   let result = applyUserScope(bookings, user);
   if (filters.status && filters.status !== "all") {
@@ -589,12 +731,28 @@ export async function getBookings(filters: BookingFilters = {}, user?: AuthUser)
 }
 
 export async function getBookingDetail(bookingId: string, user?: AuthUser): Promise<BookingDetail> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<{ detail: BookingDetail }>(`/bookings/${encodeURIComponent(bookingId)}`);
+    rememberBookingDetail(data.detail);
+    return clone(data.detail);
+  }
   await delay();
   const booking = findBooking(bookingId, user);
   return clone(makeBookingDetail(booking));
 }
 
 export async function updateBookingStatus(bookingId: string, status: BookingStatus, user?: AuthUser): Promise<Booking> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<{ booking: Booking }>(
+      `/bookings/${encodeURIComponent(bookingId)}/status`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      },
+    );
+    rememberBookings([data.booking]);
+    return clone(data.booking);
+  }
   await delay();
   const booking = findBooking(bookingId, user);
   booking.status = status;
@@ -635,6 +793,11 @@ export async function cancelBooking(bookingId: string, reason: string, user?: Au
 }
 
 export async function getCustomers(filters: CustomerFilters = {}, user?: AuthUser): Promise<Customer[]> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<{ customers: Customer[] }>(buildPartnerPath("/customers", filters));
+    rememberCustomers(data.customers);
+    return clone(data.customers);
+  }
   await delay();
   const bookingCustomerIds = new Set(applyUserScope(bookings, user).map((booking) => booking.customerId));
   let result = canAccessAllData(user)
@@ -660,6 +823,11 @@ export async function getCustomers(filters: CustomerFilters = {}, user?: AuthUse
 }
 
 export async function getCustomerDetail(customerId: string, user?: AuthUser): Promise<CustomerDetail> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<{ detail: CustomerDetail }>(`/customers/${encodeURIComponent(customerId)}`);
+    rememberCustomerDetail(data.detail);
+    return clone(data.detail);
+  }
   await delay();
   const customer = findCustomer(customerId);
   const customerBookings = applyUserScope(bookings, user).filter((booking) => booking.customerId === customerId);
@@ -678,11 +846,21 @@ export async function getCustomerDetail(customerId: string, user?: AuthUser): Pr
 }
 
 export async function getChatThreads(user?: AuthUser): Promise<ChatThreadDetail[]> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<{ threads: ChatThreadDetail[] }>("/chat/threads");
+    data.threads.forEach(rememberChatDetail);
+    return clone(data.threads);
+  }
   await delay();
   return clone(applyChatUserScope(chatThreads, user).map(makeChatThreadDetail));
 }
 
 export async function getChatThreadDetail(threadId: string, user?: AuthUser): Promise<ChatThreadDetail> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<{ detail: ChatThreadDetail }>(`/chat/threads/${encodeURIComponent(threadId)}`);
+    rememberChatDetail(data.detail);
+    return clone(data.detail);
+  }
   await delay();
   const thread = findThread(threadId, user);
   thread.unreadCount = 0;
@@ -717,6 +895,13 @@ export async function createPhoneAction(request: PhoneActionRequest): Promise<{ 
 }
 
 export async function getSharedReports(customerId?: string, user?: AuthUser): Promise<SharedReport[]> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<{ reports: SharedReport[] }>(
+      buildPartnerPath("/shared-reports", { customerId }),
+    );
+    rememberSharedReports(data.reports);
+    return clone(data.reports);
+  }
   await delay();
   if (customerId && !canAccessCustomer(customerId, user)) {
     throw new Error("이 고객의 리포트를 조회할 수 없습니다.");
@@ -726,6 +911,31 @@ export async function getSharedReports(customerId?: string, user?: AuthUser): Pr
     ? sharedReports.filter((report) => report.customerId === customerId && (canAccessAllData(user) || !report.bookingId || scopedBookingIds.has(report.bookingId)))
     : sharedReports.filter((report) => canAccessAllData(user) || !report.bookingId || scopedBookingIds.has(report.bookingId));
   return clone(result);
+}
+
+export async function getSharedReportDetail(reportId: string, user?: AuthUser): Promise<SharedReportDetail> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<SharedReportDetail>(`/reports/${encodeURIComponent(reportId)}`);
+    rememberSharedReports([data.report]);
+    return clone(data);
+  }
+  const report = sharedReports.find((item) => item.id === reportId);
+  if (!report) {
+    throw new Error("리포트를 찾을 수 없습니다.");
+  }
+  if (user && !canAccessCustomer(report.customerId, user)) {
+    throw new Error("이 리포트를 조회할 수 없습니다.");
+  }
+  return clone({
+    report,
+    kind: "analysis" as const,
+    detail: {
+      summary: report.summary,
+      category: report.category,
+      source: report.source,
+      createdAt: report.createdAt,
+    },
+  });
 }
 
 export async function getConsultationSummaries(user?: AuthUser): Promise<ConsultationSummary[]> {
@@ -880,6 +1090,11 @@ export async function updateReview(reviewId: string, patch: Partial<Pick<Review,
 }
 
 export async function getBusinessProfile(user?: AuthUser): Promise<BusinessProfile> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<{ business: BusinessProfile }>("/business-profile");
+    businessProfiles = upsertById(businessProfiles, [data.business]);
+    return clone(data.business);
+  }
   await delay();
   const business = businessProfiles.find((item) => item.id === user?.businessId) ?? businessProfiles[0];
   return clone(business);
@@ -894,6 +1109,11 @@ export async function updateBusinessProfile(patch: Partial<BusinessProfile>, use
 }
 
 export async function getExperts(user?: AuthUser): Promise<Expert[]> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<{ experts: Expert[] }>("/experts");
+    rememberExperts(data.experts);
+    return clone(data.experts);
+  }
   await delay();
   const result = canAccessAllData(user)
     ? experts

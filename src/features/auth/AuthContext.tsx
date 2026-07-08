@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, useState } from "react";
-import { completePartnerPasswordChange, mockLogin, type LoginRequest } from "../../services/api";
+import { clearPartnerSession, completePartnerPasswordChange, mockLogin, type LoginRequest } from "../../services/api";
 import type { AuthUser } from "../../types/domain";
 
 interface AuthContextValue {
@@ -38,6 +38,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextUser));
       },
       logout: () => {
+        clearPartnerSession();
         setUser(null);
         window.localStorage.removeItem(STORAGE_KEY);
       },

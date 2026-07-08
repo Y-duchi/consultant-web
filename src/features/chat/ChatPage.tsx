@@ -1,7 +1,14 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { FileImage, Phone, Search, Send } from "lucide-react";
-import { createPhoneAction, getChatThreadDetail, getChatThreads } from "../../services/api";
+import { BellRing, FileImage, FileText, Phone, Search, Send } from "lucide-react";
+import {
+  createPhoneAction,
+  getChatThreadDetail,
+  getChatThreads,
+  getPartnerSessionToken,
+  getSharedReportDetail,
+  type SharedReportDetail,
+} from "../../services/api";
 import {
   connectConsultingConversationSocket,
   type ConsultingConversationSocketClient,
@@ -26,6 +33,8 @@ export function ChatPage() {
   const [message, setMessage] = useState("");
   const [socketStatus, setSocketStatus] = useState<ConsultingSocketStatus>("idle");
   const [liveMessages, setLiveMessages] = useState<LiveChatMessage[]>([]);
+  const [realtimeNotice, setRealtimeNotice] = useState<string | null>(null);
+  const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
 
   const threadsQuery = useQuery({
     queryKey: ["chat-threads", user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
@@ -51,6 +60,11 @@ export function ChatPage() {
   });
 
   const detail = detailQuery.data;
+  const reportDetailQuery = useQuery({
+    queryKey: ["shared-report-detail", selectedReportId, user?.id, user?.businessId],
+    queryFn: () => getSharedReportDetail(selectedReportId!, user ?? undefined),
+    enabled: Boolean(selectedReportId),
+  });
   const activeBookingId = detail?.booking?.id;
   const socketBookingId = useMemo(() => {
     const override = new URLSearchParams(window.location.search).get("bookingId")?.trim();
@@ -59,6 +73,7 @@ export function ChatPage() {
 
   useEffect(() => {
     setLiveMessages(detail?.messages ?? []);
+    setSelectedReportId(null);
   }, [detail?.thread.id]);
 
   useEffect(() => {
@@ -98,6 +113,12 @@ export function ChatPage() {
                 : item,
             );
           });
+          if (nextMessage.senderType === "customer") {
+            setRealtimeNotice(`${nextMessage.senderName} 고객 메시지가 도착했습니다.`);
+            window.setTimeout(() => setRealtimeNotice(null), 4200);
+            void threadsQuery.refetch();
+            void detailQuery.refetch();
+          }
         }
 
         if (event.type === "error" && event.clientMessageId) {
@@ -112,6 +133,7 @@ export function ChatPage() {
       },
       onStatusChange: setSocketStatus,
       participantType: getParticipantType(user),
+      authToken: getPartnerSessionToken(),
     });
     socketRef.current = client;
 
@@ -191,6 +213,12 @@ export function ChatPage() {
         title="고객 대화"
         description="고객 대화, 앱 예약 정보, 선택 리포트, 내부 메모를 한 화면에서 보며 응대합니다. 연락 버튼은 action만 준비하고 자동 메시지는 보내지 않습니다."
       />
+      {realtimeNotice ? (
+        <div className="realtime-toast" role="status">
+          <BellRing size={16} />
+          <span>{realtimeNotice}</span>
+        </div>
+      ) : null}
 
       <section className="chat-layout">
         <aside className="thread-list">
@@ -301,12 +329,39 @@ export function ChatPage() {
                   <span className="muted">선택 리포트 없음</span>
                 ) : (
                   detail.sharedReports.map((report) => (
-                    <div className="report-item" key={report.id}>
-                      <strong>{report.title}</strong>
+                    <button
+                      className={`report-item report-item-button ${selectedReportId === report.id ? "is-active" : ""}`}
+                      key={report.id}
+                      type="button"
+                      onClick={() => setSelectedReportId(report.id)}
+                    >
+                      <span className="report-item-title">
+                        <FileText size={14} />
+                        <strong>{report.title}</strong>
+                      </span>
                       <p>{report.summary}</p>
-                    </div>
+                    </button>
                   ))
                 )}
+                {selectedReportId ? (
+                  <div className="report-detail-panel">
+                    {reportDetailQuery.isLoading ? <span className="muted">리포트를 불러오는 중입니다</span> : null}
+                    {reportDetailQuery.isError ? <span className="form-error">{reportDetailQuery.error.message}</span> : null}
+                    {reportDetailQuery.data ? (
+                      <>
+                        <strong>{reportDetailQuery.data.report.title}</strong>
+                        <dl className="report-detail-list">
+                          {getReportDetailEntries(reportDetailQuery.data).map((entry) => (
+                            <div key={entry.label}>
+                              <dt>{entry.label}</dt>
+                              <dd>{entry.value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
               </section>
               <section className="chat-side-section">
                 <strong>내부 메모</strong>
@@ -355,6 +410,40 @@ function getDeliveryLabel(message: LiveChatMessage) {
   if (message.deliveryStatus === "pending") return " · 전송 중";
   if (message.deliveryStatus === "failed") return " · 전송 실패";
   return "";
+}
+
+function getReportDetailEntries(reportDetail: SharedReportDetail) {
+  const detail = reportDetail.detail ?? {};
+  const preferredEntries: Array<[string, string]> = [
+    ["personalColor", "퍼스널 컬러"],
+    ["faceShape", "얼굴형"],
+    ["skinType", "피부 타입"],
+    ["toneSummary", "톤 요약"],
+    ["recommendedMood", "추천 무드"],
+    ["summary", "종합 요약"],
+    ["shortSummary", "한줄 요약"],
+    ["skinAnalysisSummary", "피부 분석"],
+    ["baseMakeupGuide", "베이스 가이드"],
+  ];
+  const entries = preferredEntries
+    .map(([key, label]) => ({ label, value: readableReportValue(detail[key]) }))
+    .filter((entry) => entry.value);
+
+  if (entries.length > 0) {
+    return entries.slice(0, 8);
+  }
+
+  return Object.entries(detail)
+    .map(([key, value]) => ({ label: key, value: readableReportValue(value) }))
+    .filter((entry) => entry.value)
+    .slice(0, 8);
+}
+
+function readableReportValue(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "";
+  if (Array.isArray(value)) return value.map(readableReportValue).filter(Boolean).join(", ");
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
 }
 
 function mapSocketSenderType(
