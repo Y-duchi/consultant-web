@@ -1,4 +1,14 @@
-import type { BookingStatus, BusinessVerificationStatus, ExposureStatus, PaymentStatus, ReviewStatus, WorkspaceScope } from "../../types/domain";
+import type {
+  BookingStatus,
+  BusinessVerificationStatus,
+  ExposureStatus,
+  PartnerApplicationDocumentReviewStatus,
+  PartnerApplicationDocumentType,
+  PartnerApplicationStatus,
+  PaymentStatus,
+  ReviewStatus,
+  WorkspaceScope,
+} from "../../types/domain";
 
 export const formatDate = (iso: string) =>
   new Intl.DateTimeFormat("ko-KR", {
@@ -69,6 +79,25 @@ export const businessVerificationStatusLabel: Record<BusinessVerificationStatus,
   approved: "인증 완료",
   rejected: "반려",
   needs_update: "보완 필요",
+};
+
+export const partnerApplicationStatusLabel: Record<PartnerApplicationStatus, string> = {
+  submitted: "검토 대기",
+  needs_update: "보완 요청",
+  approved: "승인 완료",
+  rejected: "반려",
+};
+
+export const partnerApplicationDocumentTypeLabel: Record<PartnerApplicationDocumentType, string> = {
+  business_registration: "사업자등록증",
+  beauty_license: "국가 미용사 면허증",
+  additional_certificate: "추가 자격증",
+};
+
+export const partnerApplicationDocumentReviewStatusLabel: Record<PartnerApplicationDocumentReviewStatus, string> = {
+  pending: "확인 전",
+  verified: "확인 완료",
+  rejected: "문제 있음",
 };
 
 export const toInputDate = (iso: string) => {

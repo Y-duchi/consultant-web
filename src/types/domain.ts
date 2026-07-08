@@ -3,6 +3,11 @@ export type UserRole = "admin" | "operator" | "expert" | "business_manager";
 export type WorkspaceScope = "expert_personal" | "business_operations";
 export type PartnerType = "business" | "freelancer";
 export type BusinessVerificationStatus = "not_submitted" | "submitted" | "approved" | "rejected" | "needs_update";
+export type PartnerApplicationStatus = "submitted" | "needs_update" | "approved" | "rejected";
+export type PartnerApplicationDocumentType = "business_registration" | "beauty_license" | "additional_certificate";
+export type PartnerApplicationDocumentReviewStatus = "pending" | "verified" | "rejected";
+export type ConsultationSummarySource = "manual" | "phone_ai" | "customer_app" | "expert_result";
+export type ConsultationSummaryAiStatus = "not_requested" | "queued" | "processing" | "succeeded" | "failed";
 
 export type PaymentStatus = "pending" | "paid" | "failed" | "refunded" | "partial_refund";
 
@@ -62,6 +67,79 @@ export interface BusinessProfile {
   defaultOperatingHours: OperatingHours[];
   cancellationPolicy: string;
   refundPolicy: string;
+}
+
+export interface PartnerApplicationDocument {
+  id: string;
+  applicationId: string;
+  type: PartnerApplicationDocumentType;
+  fileName: string;
+  mimeType: "application/pdf";
+  sizeLabel: string;
+  storageKey: string;
+  uploadedAt: string;
+  reviewStatus: PartnerApplicationDocumentReviewStatus;
+  note?: string;
+}
+
+export interface PartnerApplication {
+  id: string;
+  partnerType: PartnerType;
+  businessName: string;
+  ownerName: string;
+  businessRegistrationNumber?: string;
+  phone: string;
+  email: string;
+  specialties: string[];
+  categories: string[];
+  introduction: string;
+  price30Min: number;
+  price60Min: number;
+  status: PartnerApplicationStatus;
+  submittedAt: string;
+  updatedAt: string;
+  reviewedAt?: string;
+  reviewerName?: string;
+  reviewMemo?: string;
+  businessId?: string;
+  generatedAccountId?: string;
+  documents: PartnerApplicationDocument[];
+}
+
+export interface PartnerAccount {
+  id: string;
+  applicationId: string;
+  businessId: string;
+  expertId?: string;
+  email: string;
+  temporaryPassword: string;
+  role: "business_manager" | "expert";
+  workspaceScope: WorkspaceScope;
+  status: "invited" | "active" | "suspended";
+  passwordChangeRequired: boolean;
+  createdAt: string;
+  deliveredBy: "manual" | "email" | "sms";
+}
+
+export interface PartnerBusinessMember {
+  id: string;
+  businessId: string;
+  accountId: string;
+  expertId?: string;
+  role: "owner" | "manager" | "expert";
+  workspaceScope: WorkspaceScope;
+  status: "active" | "invited" | "suspended";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ApplicationReviewLog {
+  id: string;
+  applicationId: string;
+  actorName: string;
+  action: "submitted" | "needs_update" | "approved" | "rejected" | "account_created";
+  memo: string;
+  createdAt: string;
 }
 
 export interface OperatingHours {
@@ -166,11 +244,30 @@ export interface ConsultationSummary {
   expertId: string;
   customerId: string;
   createdAt: string;
+  source: ConsultationSummarySource;
+  aiStatus: ConsultationSummaryAiStatus;
+  aiModel?: string;
+  transcript?: string;
   internalMemo: string;
   customerSummary: string;
   recommendations: string;
+  visibleToCustomer: boolean;
   deliveredReportIds: string[];
   reviewRequestStatus: "ready" | "sent" | "reviewed";
+}
+
+export interface ConsultationSummaryJob {
+  id: string;
+  bookingId: string;
+  businessId: string;
+  expertId: string;
+  requestedBy: string;
+  status: ConsultationSummaryAiStatus;
+  source: "phone_transcript" | "manual_memo";
+  aiModel?: string;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Review {
@@ -213,6 +310,10 @@ export interface AuthUser {
   businessId: string;
   workspaceScope: WorkspaceScope;
   partnerType?: PartnerType;
+  applicationId?: string;
+  applicationStatus?: PartnerApplicationStatus;
+  accountId?: string;
+  passwordChangeRequired?: boolean;
 }
 
 export interface DashboardSummary {
@@ -228,6 +329,20 @@ export interface DashboardSummary {
   verificationStatus: BusinessVerificationStatus;
   todayTimeline: Booking[];
   urgentTasks: UrgentTask[];
+}
+
+export interface AdminDashboardSummary {
+  pendingApplicationCount: number;
+  needsUpdateApplicationCount: number;
+  approvedBusinessCount: number;
+  totalExpertCount: number;
+  todayBookingCount: number;
+  refundRequestCount: number;
+  failedSummaryJobCount: number;
+  hiddenOrReportedReviewCount: number;
+  recentApplications: PartnerApplication[];
+  todayBookings: Booking[];
+  summaryJobs: ConsultationSummaryJob[];
 }
 
 export interface UrgentTask {

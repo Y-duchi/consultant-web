@@ -1,5 +1,21 @@
-import type { BookingStatus, BusinessVerificationStatus, ExposureStatus, PaymentStatus, ReviewStatus } from "../../types/domain";
-import { bookingStatusLabel, businessVerificationStatusLabel, exposureStatusLabel, paymentStatusLabel, reviewStatusLabel } from "../utils/format";
+import type {
+  BookingStatus,
+  BusinessVerificationStatus,
+  ExposureStatus,
+  PartnerApplicationDocumentReviewStatus,
+  PartnerApplicationStatus,
+  PaymentStatus,
+  ReviewStatus,
+} from "../../types/domain";
+import {
+  bookingStatusLabel,
+  businessVerificationStatusLabel,
+  exposureStatusLabel,
+  partnerApplicationDocumentReviewStatusLabel,
+  partnerApplicationStatusLabel,
+  paymentStatusLabel,
+  reviewStatusLabel,
+} from "../utils/format";
 
 type BadgeTone = "neutral" | "success" | "warning" | "danger" | "info";
 
@@ -63,4 +79,23 @@ export function BusinessVerificationBadge({ status }: { status: BusinessVerifica
     needs_update: "warning",
   };
   return <Badge tone={tone[status]}>{businessVerificationStatusLabel[status]}</Badge>;
+}
+
+export function PartnerApplicationStatusBadge({ status }: { status: PartnerApplicationStatus }) {
+  const tone: Record<PartnerApplicationStatus, BadgeTone> = {
+    submitted: "warning",
+    needs_update: "info",
+    approved: "success",
+    rejected: "danger",
+  };
+  return <Badge tone={tone[status]}>{partnerApplicationStatusLabel[status]}</Badge>;
+}
+
+export function PartnerApplicationDocumentReviewBadge({ status }: { status: PartnerApplicationDocumentReviewStatus }) {
+  const tone: Record<PartnerApplicationDocumentReviewStatus, BadgeTone> = {
+    pending: "warning",
+    verified: "success",
+    rejected: "danger",
+  };
+  return <Badge tone={tone[status]}>{partnerApplicationDocumentReviewStatusLabel[status]}</Badge>;
 }

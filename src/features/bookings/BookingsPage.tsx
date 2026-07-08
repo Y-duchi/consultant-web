@@ -68,11 +68,11 @@ export function BookingsPage() {
   });
 
   const bookingsQuery = useQuery({
-    queryKey: ["bookings", query, status, user?.id, user?.workspaceScope],
+    queryKey: ["bookings", query, status, user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
     queryFn: () => getBookings({ query, status, sort: "startsAtAsc" }, user ?? undefined),
   });
   const expertsQuery = useQuery({
-    queryKey: ["experts", user?.id, user?.workspaceScope],
+    queryKey: ["experts", user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
     queryFn: () => getExperts(user ?? undefined),
   });
   const selectedExpertId = expertsQuery.data?.[0]?.id ?? "exp-1";
@@ -82,8 +82,8 @@ export function BookingsPage() {
     enabled: Boolean(selectedExpertId),
   });
   const detailQuery = useQuery({
-    queryKey: ["booking-detail", selectedBookingId],
-    queryFn: () => getBookingDetail(selectedBookingId!),
+    queryKey: ["booking-detail", selectedBookingId, user?.id, user?.businessId],
+    queryFn: () => getBookingDetail(selectedBookingId!, user ?? undefined),
     enabled: Boolean(selectedBookingId),
   });
 
@@ -94,22 +94,22 @@ export function BookingsPage() {
   };
 
   const statusMutation = useMutation({
-    mutationFn: ({ bookingId, nextStatus }: { bookingId: string; nextStatus: BookingStatus }) => updateBookingStatus(bookingId, nextStatus),
+    mutationFn: ({ bookingId, nextStatus }: { bookingId: string; nextStatus: BookingStatus }) => updateBookingStatus(bookingId, nextStatus, user ?? undefined),
     onSuccess: invalidateBookings,
   });
   const noteMutation = useMutation({
-    mutationFn: ({ bookingId, note }: { bookingId: string; note: string }) => addBookingNote(bookingId, note),
+    mutationFn: ({ bookingId, note }: { bookingId: string; note: string }) => addBookingNote(bookingId, note, user ?? undefined),
     onSuccess: () => {
       setNoteDraft("");
       invalidateBookings();
     },
   });
   const updateMutation = useMutation({
-    mutationFn: ({ bookingId, patch }: { bookingId: string; patch: Parameters<typeof updateBooking>[1] }) => updateBooking(bookingId, patch),
+    mutationFn: ({ bookingId, patch }: { bookingId: string; patch: Parameters<typeof updateBooking>[1] }) => updateBooking(bookingId, patch, user ?? undefined),
     onSuccess: invalidateBookings,
   });
   const cancelMutation = useMutation({
-    mutationFn: ({ bookingId, reason }: { bookingId: string; reason: string }) => cancelBooking(bookingId, reason),
+    mutationFn: ({ bookingId, reason }: { bookingId: string; reason: string }) => cancelBooking(bookingId, reason, user ?? undefined),
     onSuccess: invalidateBookings,
   });
   const availabilityMutation = useMutation({
@@ -269,7 +269,7 @@ export function BookingsPage() {
               <Button
                 variant="secondary"
                 icon={<MessageSquareText size={16} />}
-                onClick={() => navigate("/chat")}
+                onClick={() => navigate("/workspace/chat")}
               >
                 채팅
               </Button>
@@ -281,7 +281,7 @@ export function BookingsPage() {
                 전화 준비
               </Button>
               {!isTerminalBookingStatus(selectedDetail.booking.status) ? (
-                <Button variant="primary" icon={<CheckCircle2 size={16} />} onClick={() => navigate(`/completion?bookingId=${selectedDetail.booking.id}`)}>
+                <Button variant="primary" icon={<CheckCircle2 size={16} />} onClick={() => navigate(`/workspace/completion?bookingId=${selectedDetail.booking.id}`)}>
                   완료/리포트
                 </Button>
               ) : null}

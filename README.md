@@ -2,7 +2,10 @@
 
 뷰티 종합 플랫폼 앱의 전문가, 업체, 프리랜서 파트너가 고객 상담 예약과 AI 리포트를 관리하는 React 기반 웹 매니저입니다.
 
-현재는 백엔드 없이 동작하는 프론트엔드 중심 구현이며, 모든 데이터 접근은 `src/services/api.ts`의 mock service layer를 통합니다. 추후 FastAPI + AWS RDS Postgres + AWS 배포 환경으로 교체하기 쉽게 화면에서 mock 데이터를 직접 import하지 않도록 분리했습니다.
+현재 프론트는 `src/services/api.ts`의 mock service layer로 동작하고, `backend/`에는 같은 리소스 구조의 FastAPI mock API와 RDS 스키마 초안이 준비되어 있습니다. 실제 RDS 테이블 생성은 아직 실행하지 않았고, 추후 승인 후 마이그레이션을 적용하는 전제입니다.
+
+관리자와 업체/전문가 화면은 라우트와 레이아웃을 분리합니다. 운영자는 `/admin/*`, 승인된 파트너는 `/workspace/*`, 승인 전 신청자는 `/application-status`만 사용합니다.
+임시 비밀번호로 승인된 파트너는 `/workspace/password`에서 새 비밀번호를 설정하기 전까지 운영 화면 접근이 제한됩니다.
 
 ## 기술 스택
 
@@ -24,6 +27,15 @@ npm run dev
 
 개발 서버는 기본적으로 `http://127.0.0.1:5173`에서 실행됩니다.
 
+백엔드 로컬 확인:
+
+```bash
+cd backend
+python -m venv .venv312
+.venv312/bin/python -m pip install -r requirements.txt
+PYTHONPATH=. .venv312/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
 ## 환경변수
 
 로컬에서 실제 키와 비밀번호는 Git에 올리지 않는 파일에 넣습니다.
@@ -36,6 +48,7 @@ npm run dev
 
 ```env
 VITE_API_BASE_URL=http://127.0.0.1:8000
+VITE_PARTNER_EVENTS_URL=
 ```
 
 현재 배포 환경에서는 Vercel 프론트가 CloudFront를 통해 ECS API를 호출하도록 아래 값을 사용합니다.
@@ -75,6 +88,8 @@ S3는 같은 버킷을 공유하더라도 `user-reports/`, `business-verificatio
 
 Vercel에는 프론트만 배포합니다. `backend/`는 ECS 배포용 코드라 `.vercelignore`에서 제외합니다.
 
+개발 중에는 프론트와 백엔드를 로컬에서 띄워서 확인하고, 기능이 안정된 시점에만 Vercel/ECS로 배포합니다. 자세한 흐름은 [로컬 개발과 배포 흐름](docs/development-deployment-workflow.md)을 참고합니다.
+
 프로덕션 빌드 확인:
 
 ```bash
@@ -83,7 +98,10 @@ npm run build
 
 ## 구현된 주요 화면
 
-- Mock 로그인: 첫 진입에서 플랫폼 관리자와 업체/프리랜서 파트너 분기, 사업자등록증/자격증 mock 인증 제출
+- 로그인/입장: 관리자 로그인, 업체/전문가 로그인, 입점 신청 분기
+- 입점 신청: 업체/프리랜서 정보, 사업자등록증 PDF, 국가 미용사 면허증 PDF, 추가 자격증 PDF mock 제출
+- 입점 심사: 관리자 신청 목록, 상태 필터, 상세 드로어, 서류 열람 mock, 보완 요청/반려/승인 및 계정 생성
+- 신청 상태: 승인 전 업체/전문가가 로그인하면 운영 메뉴 대신 검토 대기/보완 요청/반려 상태 확인
 - 대시보드: 오늘 앱 예약, 오늘 결제액, 리포트 전달 대기, 사업자 인증 상태, 미응답 메시지, 30분 슬롯 재고
 - 예약 관리: 월/주/일 캘린더, 10:00-20:00 30분 슬롯, 가능 시간/휴무/점심/예외 시간 조정, 예약 상세 드로어
 - 고객 리포트 관리: 검색/태그/최근 활동/정렬, 고객 상세 드로어, 앱 선택 리포트, 예약 이력, 처방 노트, 첨부 이력
@@ -117,8 +135,58 @@ src/
 - `uploadCredentialMock`
 - `uploadBusinessVerificationMock`
 - `createConsultationSummary`
+- `submitPartnerApplication`
+- `getPartnerApplications`
+- `approvePartnerApplication`
+- `preparePartnerApplicationDocumentAccess`
 
 추후 연동 시 `src/services/api.ts` 내부 구현만 FastAPI 엔드포인트 호출로 교체하면 됩니다.
+
+입점 심사 백엔드 초안:
+
+- FastAPI router: `backend/app/routers/applications.py`
+- Admin/partner router: `backend/app/routers/admin.py`, `backend/app/routers/partner.py`
+- Pydantic schema: `backend/app/schemas/partner_applications.py`
+- Mock service: `backend/app/services/partner_applications.py`
+- RDS SQL draft: `backend/db/partner_applications_schema.sql`
+
+운영자/파트너 API prefix:
+
+- Applicant: `POST /api/partner-applications`, `GET /api/partner-applications/{application_id}/status`
+- Admin: `/api/admin/dashboard`, `/api/admin/partner-applications`, `/api/admin/partner-applications/{application_id}/needs-update`, `/api/admin/partner-applications/{application_id}/reject`, `/api/admin/partner-applications/{application_id}/approve`, `/api/admin/partner-applications/documents/{document_id}/access`, `/api/admin/businesses`, `/api/admin/bookings`, `/api/admin/summary-jobs`
+- Partner: `/api/partner/me`, `/api/partner/me/password`, `/api/partner/dashboard`, `/api/partner/bookings`, `/api/partner/customers`, `/api/partner/chats`, `/api/partner/consultations/{booking_id}/summary`, `/api/partner/events`
+- Partner event debug: `/api/partner/events/snapshot`
+- Customer app summary: `/api/consulting/bookings/{booking_id}/summary`
+
+백엔드 mock API는 운영자 요청에 `X-Admin-Id`와 `X-Aura-Role`, 파트너 요청에 `X-Partner-Account-Id`, `X-Partner-Role`, `X-Business-Id`, `X-Workspace-Scope`를 요구합니다. `expert_personal` scope는 `X-Expert-Id`가 없으면 거절됩니다. Partner 업무 API는 이 principal을 승인된 `partner_account`와 active `business_member`에 다시 대조하고, 임시 비밀번호 변경 대상 계정은 `/partner/me`와 `/partner/me/password` 외의 workspace API 접근을 거절합니다. 이 header principal은 로컬 계약 검증용이며, 실서비스 전에는 세션/JWT/Cognito 클레임으로 교체해야 합니다.
+입점 신청자의 public API는 제출과 제한된 상태 조회만 허용하고, 서류 presigned URL, 전체 목록, 상세 검토 로그, 승인/반려는 admin API 뒤에 둡니다.
+
+파트너 고객 조회는 별도 고객 복사본을 만들지 않고 `consulting_bookings -> consulting_experts -> businesses -> users` 관계로 계산합니다. DB 초안에는 이 계약을 드러내는 `partner_booking_customers` view가 포함되어 있고, 백엔드 mock도 booking source row가 `business_id`를 직접 소유하지 않도록 맞췄습니다.
+고객 앱 요약 조회는 `consulting_summaries.visible_to_customer=true`와 `consulting_bookings.status='completed'`를 동시에 만족하는 저장 요약만 반환합니다. DB 초안에는 이 기준을 고정하는 `customer_visible_consulting_summaries` view가 포함되어 있습니다.
+
+파트너 이벤트 스트림은 브라우저 `EventSource` 제약 때문에 header 외에도 `accountId`, `role`, `businessId`, `expertId`, `workspaceScope` query를 mock principal로 받을 수 있습니다. 새 앱 예약/예약 변경 이벤트는 `expert_id`에서 `business_id`를 계산한 뒤 해당 업체/전문가에게만 전달됩니다. 전문가 개인 scope는 `expert_id`가 정확히 일치하는 이벤트만 받고, 업체 전체 이벤트는 대표/매니저 scope에서만 소비합니다.
+RDS 초안에는 `partner_event_outbox`가 포함되어 있어 예약/요약/리뷰/환불/미읽은 채팅 이벤트를 업체·전문가 scope와 증가 sequence로 저장하고, SSE 재연결 시 `Last-Event-ID` 또는 `afterId` cursor 이후 이벤트를 replay할 수 있습니다. 채팅 본문은 기존 상담 WebSocket을 유지하고, 대시보드 갱신 이벤트만 별도 stream으로 분리합니다.
+SSE가 끊기거나 이벤트 cursor를 놓친 경우에는 공통 fallback refetch root로 대시보드, 예약, 상담 완료 후보, 채팅 목록, 리뷰, AI 요약 작업 목록을 재조회합니다.
+
+백엔드 scope/summary 계약 smoke check:
+
+```bash
+python3 backend/scripts/smoke_partner_contract.py
+```
+
+이 smoke check는 입점 승인 중간 실패 시 business/expert/account/document/log 변경이 남지 않는 롤백 계약도 검증합니다.
+승인 성공 시에는 `business`, `expert`, `partner_account`, `business_member`, 검증된 문서 상태와 review log가 같은 트랜잭션 단위로 생성되는 계약입니다.
+RDS 초안은 `partner_account`와 `business_member`의 role/workspace/expert scope 조합을 check constraint로 고정하고, member가 다른 business의 account를 참조하지 못하도록 composite FK를 둡니다.
+승인 계정의 첫 로그인 비밀번호 변경은 `/api/partner/me/password`에서 자기 account/business/expert scope를 확인한 뒤 `password_change_required=false`와 `status=active`로 전환합니다.
+
+프론트 라우트/권한과 partner event invalidation 계약 확인:
+
+```bash
+node scripts/verify-role-split.mjs http://127.0.0.1:9223 http://127.0.0.1:5173
+node scripts/verify-partner-event-rules.mjs
+```
+
+PDF 서류는 public URL을 저장하지 않고, private S3 `storage_key`만 저장한 뒤 관리자 열람 시 짧은 시간의 presigned URL을 발급하는 방식으로 설계했습니다.
 
 권장 백엔드 확장 방향:
 

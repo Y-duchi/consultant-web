@@ -1,7 +1,14 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { FileImage, Phone, Search, Send } from "lucide-react";
-import { createPhoneAction, getChatThreadDetail, getChatThreads, sendMessage } from "../../services/api";
+import { createPhoneAction, getChatThreadDetail, getChatThreads } from "../../services/api";
+import {
+  connectConsultingConversationSocket,
+  type ConsultingConversationSocketClient,
+  type ConsultingRealtimeMessageEvent,
+  type ConsultingServerSocketEvent,
+  type ConsultingSocketStatus,
+} from "../../services/consultingRealtime";
 import { useAuth } from "../auth/AuthContext";
 import { Badge, BookingStatusBadge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
@@ -9,16 +16,19 @@ import { TextInput } from "../../shared/ui/Field";
 import { PageHeader } from "../../shared/ui/PageHeader";
 import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/StateViews";
 import { formatDateTime, formatTime } from "../../shared/utils/format";
+import type { AuthUser, ChatMessage } from "../../types/domain";
 
 export function ChatPage() {
   const { user } = useAuth();
-  const queryClient = useQueryClient();
+  const socketRef = useRef<ConsultingConversationSocketClient | null>(null);
   const [query, setQuery] = useState("");
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const [socketStatus, setSocketStatus] = useState<ConsultingSocketStatus>("idle");
+  const [liveMessages, setLiveMessages] = useState<LiveChatMessage[]>([]);
 
   const threadsQuery = useQuery({
-    queryKey: ["chat-threads", user?.id, user?.workspaceScope],
+    queryKey: ["chat-threads", user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
     queryFn: () => getChatThreads(user ?? undefined),
   });
   const filteredThreads = useMemo(() => {
@@ -35,31 +45,144 @@ export function ChatPage() {
   }, [activeThreadId, filteredThreads]);
 
   const detailQuery = useQuery({
-    queryKey: ["chat-thread-detail", activeThreadId],
-    queryFn: () => getChatThreadDetail(activeThreadId!),
+    queryKey: ["chat-thread-detail", activeThreadId, user?.id, user?.businessId],
+    queryFn: () => getChatThreadDetail(activeThreadId!, user ?? undefined),
     enabled: Boolean(activeThreadId),
   });
 
-  const sendMutation = useMutation({
-    mutationFn: () => sendMessage(activeThreadId!, message.trim()),
-    onSuccess: () => {
-      setMessage("");
-      queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
-      queryClient.invalidateQueries({ queryKey: ["chat-thread-detail", activeThreadId] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
-    },
-  });
+  const detail = detailQuery.data;
+  const activeBookingId = detail?.booking?.id;
+  const socketBookingId = useMemo(() => {
+    const override = new URLSearchParams(window.location.search).get("bookingId")?.trim();
+    return override || activeBookingId;
+  }, [activeBookingId]);
+
+  useEffect(() => {
+    setLiveMessages(detail?.messages ?? []);
+  }, [detail?.thread.id]);
+
+  useEffect(() => {
+    if (!socketBookingId || !detail) {
+      setSocketStatus("idle");
+      return;
+    }
+
+    const client = connectConsultingConversationSocket({
+      bookingId: socketBookingId,
+      onEvent: (event) => {
+        if (event.type === "message.ack") {
+          setLiveMessages((current) =>
+            current.map((item) =>
+              item.clientMessageId === event.clientMessageId
+                ? { ...item, id: event.messageId, sentAt: event.sentAt, deliveryStatus: "sent" }
+                : item,
+            ),
+          );
+          return;
+        }
+
+        if (event.type === "message.history") {
+          const historyMessages = event.messages.map((item) => mapSocketMessage(item, detail.thread.id));
+          setLiveMessages((current) => mergeHistoryMessages(current, historyMessages));
+          return;
+        }
+
+        if (event.type === "message.new") {
+          const nextMessage = mapSocketMessage(event, detail.thread.id);
+          setLiveMessages((current) => {
+            const existingIndex = current.findIndex((item) => item.id === event.id || (event.clientMessageId && item.clientMessageId === event.clientMessageId));
+            if (existingIndex < 0) return [...current, nextMessage];
+            return current.map((item, index) =>
+              index === existingIndex
+                ? { ...item, id: event.id, sentAt: event.sentAt, deliveryStatus: "sent" }
+                : item,
+            );
+          });
+        }
+
+        if (event.type === "error" && event.clientMessageId) {
+          setLiveMessages((current) =>
+            current.map((item) =>
+              item.clientMessageId === event.clientMessageId
+                ? { ...item, deliveryStatus: "failed" }
+                : item,
+            ),
+          );
+        }
+      },
+      onStatusChange: setSocketStatus,
+      participantType: getParticipantType(user),
+    });
+    socketRef.current = client;
+
+    return () => {
+      client.close();
+      if (socketRef.current === client) {
+        socketRef.current = null;
+      }
+    };
+  }, [detail, socketBookingId, user]);
+
+  const sendLiveMessage = (targetMessage: LiveChatMessage) => {
+    if (!socketBookingId) return false;
+    return Boolean(
+      socketRef.current?.sendMessage({
+        bookingId: socketBookingId,
+        body: targetMessage.body,
+        clientMessageId: targetMessage.clientMessageId ?? targetMessage.id,
+      }),
+    );
+  };
+
+  const retryMessage = (targetMessage: LiveChatMessage) => {
+    setLiveMessages((current) =>
+      current.map((item) =>
+        item.clientMessageId === targetMessage.clientMessageId
+          ? { ...item, deliveryStatus: "pending" }
+          : item,
+      ),
+    );
+
+    if (!sendLiveMessage(targetMessage)) {
+      setLiveMessages((current) =>
+        current.map((item) =>
+          item.clientMessageId === targetMessage.clientMessageId
+            ? { ...item, deliveryStatus: "failed" }
+            : item,
+        ),
+      );
+    }
+  };
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
-    if (!message.trim() || !activeThreadId) return;
-    sendMutation.mutate();
+    if (!message.trim() || !activeThreadId || !detail || !socketBookingId || socketStatus !== "connected") return;
+    const clientMessageId = createClientMessageId();
+    const nextMessage: LiveChatMessage = {
+      id: clientMessageId,
+      threadId: detail.thread.id,
+      senderType: getOutgoingSenderType(user),
+      senderName: user?.name ?? "운영팀",
+      body: message.trim(),
+      sentAt: new Date().toISOString(),
+      attachments: [],
+      clientMessageId,
+      deliveryStatus: "pending",
+    };
+    setLiveMessages((current) => [...current, nextMessage]);
+    setMessage("");
+
+    if (!sendLiveMessage(nextMessage)) {
+      setLiveMessages((current) =>
+        current.map((item) =>
+          item.clientMessageId === clientMessageId ? { ...item, deliveryStatus: "failed" } : item,
+        ),
+      );
+    }
   };
 
   if (threadsQuery.isLoading) return <LoadingState label="고객 대화를 불러오는 중입니다" />;
   if (threadsQuery.isError) return <ErrorState message={threadsQuery.error.message} onRetry={() => threadsQuery.refetch()} />;
-
-  const detail = detailQuery.data;
 
   return (
     <>
@@ -101,7 +224,7 @@ export function ChatPage() {
                   <img src={detail.customer.profileImageUrl} alt="" />
                   <div className="cell-main">
                     <strong>{detail.customer.name}</strong>
-                    <span>{detail.customer.phone} · 담당 {detail.expert.name}</span>
+                    <span>{detail.customer.phone} · 담당 {detail.expert.name} · {getSocketStatusLabel(socketStatus)}</span>
                   </div>
                 </div>
                 <Button variant="secondary" icon={<Phone size={16} />} onClick={() => createPhoneAction({ customerId: detail.customer.id, bookingId: detail.booking?.id, channel: "phone" })}>
@@ -115,10 +238,20 @@ export function ChatPage() {
 
           <div className="message-list">
             {detailQuery.isLoading ? <LoadingState label="대화 내용을 불러오는 중입니다" /> : null}
-            {detail?.messages.map((item) => (
+            {liveMessages.map((item) => (
               <div className={`message ${item.senderType === "operator" || item.senderType === "expert" ? "mine" : ""}`} key={item.id}>
-                <div className="message-bubble">{item.body}</div>
-                <small>{item.senderName} · {formatDateTime(item.sentAt)}</small>
+                <div className="message-bubble">
+                  {item.body}
+                  {item.attachments.filter((attachment) => attachment.url).map((attachment) => (
+                    <img alt="" key={attachment.id} src={attachment.url} style={{ borderRadius: 8, display: "block", marginTop: 8, maxWidth: 220, width: "100%" }} />
+                  ))}
+                </div>
+                <small>{item.senderName} · {formatDateTime(item.sentAt)}{getDeliveryLabel(item)}</small>
+                {item.deliveryStatus === "failed" ? (
+                  <Button type="button" variant="ghost" onClick={() => retryMessage(item)}>
+                    다시 보내기
+                  </Button>
+                ) : null}
               </div>
             ))}
           </div>
@@ -128,7 +261,7 @@ export function ChatPage() {
               첨부
             </Button>
             <TextInput value={message} onChange={(event) => setMessage(event.target.value)} placeholder="고객에게 보낼 메시지를 입력하세요" />
-            <Button type="submit" variant="primary" icon={<Send size={16} />} disabled={!message.trim() || sendMutation.isPending}>
+            <Button type="submit" variant="primary" icon={<Send size={16} />} disabled={!message.trim() || !socketBookingId || socketStatus !== "connected"}>
               전송
             </Button>
           </form>
@@ -187,6 +320,85 @@ export function ChatPage() {
       </section>
     </>
   );
+}
+
+type LiveChatMessage = ChatMessage & {
+  clientMessageId?: string;
+  deliveryStatus?: "failed" | "pending" | "sent";
+};
+
+function createClientMessageId() {
+  return `web-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function getParticipantType(user: AuthUser | null) {
+  if (user?.role === "expert") {
+    return "expert";
+  }
+
+  return "operator";
+}
+
+function getOutgoingSenderType(user: AuthUser | null): ChatMessage["senderType"] {
+  return getParticipantType(user) === "expert" ? "expert" : "operator";
+}
+
+function getSocketStatusLabel(status: ConsultingSocketStatus) {
+  if (status === "connected") return "실시간 연결됨";
+  if (status === "connecting") return "연결 중";
+  if (status === "reconnecting") return "재연결 중";
+  if (status === "offline") return "연결 대기";
+  return "대화 대기";
+}
+
+function getDeliveryLabel(message: LiveChatMessage) {
+  if (message.deliveryStatus === "pending") return " · 전송 중";
+  if (message.deliveryStatus === "failed") return " · 전송 실패";
+  return "";
+}
+
+function mapSocketSenderType(
+  senderType: ConsultingRealtimeMessageEvent["senderType"],
+): ChatMessage["senderType"] {
+  if (senderType === "user") return "customer";
+  return senderType;
+}
+
+function mapSocketMessage(
+  event: ConsultingRealtimeMessageEvent,
+  threadId: string,
+): LiveChatMessage {
+  return {
+    id: event.id,
+    threadId,
+    senderType: mapSocketSenderType(event.senderType),
+    senderName: event.senderName,
+    body: event.body,
+    sentAt: event.sentAt,
+    attachments: event.media?.map((media) => ({
+      id: media.id,
+      ownerId: event.bookingId,
+      type: "image",
+      name: media.contentType ?? "chat-image",
+      url: media.thumbnailUrl ?? media.cdnUrl ?? "",
+      uploadedAt: event.sentAt,
+    })) ?? [],
+    clientMessageId: event.clientMessageId,
+    deliveryStatus: "sent",
+  };
+}
+
+function getMessageKey(message: LiveChatMessage) {
+  return message.clientMessageId ?? message.id;
+}
+
+function mergeHistoryMessages(current: LiveChatMessage[], historyMessages: LiveChatMessage[]) {
+  const historyKeys = new Set(historyMessages.map(getMessageKey));
+  const pendingMessages = current.filter(
+    (item) => (item.deliveryStatus === "pending" || item.deliveryStatus === "failed") && !historyKeys.has(getMessageKey(item)),
+  );
+
+  return [...historyMessages, ...pendingMessages];
 }
 
 function lastMessage(thread: { messages: Array<{ body: string }> }) {

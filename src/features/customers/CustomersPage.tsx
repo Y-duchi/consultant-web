@@ -23,12 +23,12 @@ export function CustomersPage() {
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
 
   const customersQuery = useQuery({
-    queryKey: ["customers", query, tag, sort, user?.id, user?.workspaceScope],
+    queryKey: ["customers", query, tag, sort, user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
     queryFn: () => getCustomers({ query, tag, sort }, user ?? undefined),
   });
   const detailQuery = useQuery({
-    queryKey: ["customer-detail", selectedCustomerId],
-    queryFn: () => getCustomerDetail(selectedCustomerId!),
+    queryKey: ["customer-detail", selectedCustomerId, user?.id, user?.businessId],
+    queryFn: () => getCustomerDetail(selectedCustomerId!, user ?? undefined),
     enabled: Boolean(selectedCustomerId),
   });
 
@@ -105,7 +105,7 @@ export function CustomersPage() {
               <Button variant="secondary" icon={<Phone size={16} />} onClick={() => createPhoneAction({ customerId: detailQuery.data.customer.id, channel: "phone" })}>
                 전화 준비
               </Button>
-              <Button variant="primary" icon={<MessageSquareText size={16} />} onClick={() => navigate("/chat")}>
+              <Button variant="primary" icon={<MessageSquareText size={16} />} onClick={() => navigate("/workspace/chat")}>
                 채팅 바로가기
               </Button>
             </>

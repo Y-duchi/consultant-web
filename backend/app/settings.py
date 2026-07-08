@@ -49,6 +49,8 @@ class Settings(BaseSettings):
   sms_provider: str | None = None
   chat_provider: str | None = None
   payment_provider: str | None = None
+  openai_api_key: str | None = None
+  openai_summary_model: str = "OPENAI_SUMMARY_MODEL"
 
   model_config = SettingsConfigDict(
     env_file=("backend/.env", ".env"),

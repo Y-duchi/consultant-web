@@ -14,8 +14,8 @@ import type { BusinessProfile, Expert, ExposureStatus, PartnerType } from "../..
 export function ProfilePage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const businessQuery = useQuery({ queryKey: ["business-profile"], queryFn: getBusinessProfile });
-  const expertsQuery = useQuery({ queryKey: ["experts", user?.id, user?.workspaceScope], queryFn: () => getExperts(user ?? undefined) });
+  const businessQuery = useQuery({ queryKey: ["business-profile", user?.businessId], queryFn: () => getBusinessProfile(user ?? undefined) });
+  const expertsQuery = useQuery({ queryKey: ["experts", user?.id, user?.businessId, user?.expertId, user?.workspaceScope], queryFn: () => getExperts(user ?? undefined) });
   const [businessDraft, setBusinessDraft] = useState<Partial<BusinessProfile>>({});
   const [selectedExpertId, setSelectedExpertId] = useState("");
   const [expertDraft, setExpertDraft] = useState<Partial<Expert>>({});
@@ -39,11 +39,11 @@ export function ProfilePage() {
   }, [selectedExpert]);
 
   const businessMutation = useMutation({
-    mutationFn: () => updateBusinessProfile(businessDraft),
+    mutationFn: () => updateBusinessProfile(businessDraft, user ?? undefined),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["business-profile"] }),
   });
   const expertMutation = useMutation({
-    mutationFn: () => updateExpertProfile(selectedExpertId, expertDraft),
+    mutationFn: () => updateExpertProfile(selectedExpertId, expertDraft, user ?? undefined),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["experts"] }),
   });
   const uploadMutation = useMutation({
@@ -51,7 +51,7 @@ export function ProfilePage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["experts"] }),
   });
   const businessVerificationMutation = useMutation({
-    mutationFn: () => uploadBusinessVerificationMock(businessVerificationFile),
+    mutationFn: () => uploadBusinessVerificationMock(businessVerificationFile, user ?? undefined),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["business-profile"] }),
   });
 

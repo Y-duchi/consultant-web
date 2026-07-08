@@ -65,18 +65,18 @@ await wait(1000);
 await cdp("Runtime.evaluate", { expression: "window.localStorage.clear()" });
 await go("/login");
 
-const loginReady = (await textIncludes("AURA 파트너 매니저")) && (await textIncludes("Mock 로그인"));
+const loginReady = (await textIncludes("AURA 파트너 매니저")) && (await textIncludes("업체/전문가 로그인"));
 await cdp("Runtime.evaluate", {
   expression: `document.querySelector('button[type="submit"]').click()`,
 });
 await wait(1200);
 
 const dashboardReady = (await textIncludes("오늘 앱에서 들어온 뷰티 상담 운영")) && (await textIncludes("처리 필요"));
-await go("/bookings");
+await go("/workspace/bookings");
 const bookingsReady = (await textIncludes("앱 예약 관리")) && (await textIncludes("가능 시간 조정")) && (await textIncludes("월")) && (await textIncludes("일"));
-await go("/chat");
+await go("/workspace/chat");
 const chatReady = (await textIncludes("고객 대화")) && (await textIncludes("고객 프로필")) && (await textIncludes("전송"));
-await go("/completion");
+await go("/workspace/completion");
 const completionReady = (await textIncludes("상담 완료 및 처방 노트 전달")) && (await textIncludes("완료 처리할 예약"));
 
 const overlayResult = await cdp("Runtime.evaluate", {

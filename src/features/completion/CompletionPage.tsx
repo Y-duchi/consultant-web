@@ -1,8 +1,8 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Send } from "lucide-react";
-import { createConsultationSummary, getBookingDetail, getBookings, getCustomerName, getSharedReports } from "../../services/api";
+import { CheckCircle2, Send, Sparkles } from "lucide-react";
+import { createConsultationSummary, generateConsultationSummary, getBookingDetail, getBookings, getCustomerName, getSharedReports } from "../../services/api";
 import { useAuth } from "../auth/AuthContext";
 import { BookingStatusBadge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
@@ -16,14 +16,16 @@ export function CompletionPage() {
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [selectedBookingId, setSelectedBookingId] = useState(searchParams.get("bookingId") ?? "");
+  const [transcript, setTranscript] = useState("");
   const [internalMemo, setInternalMemo] = useState("");
   const [customerSummary, setCustomerSummary] = useState("");
   const [recommendations, setRecommendations] = useState("");
   const [selectedReportIds, setSelectedReportIds] = useState<string[]>([]);
   const [sendReviewRequest, setSendReviewRequest] = useState(true);
+  const [visibleToCustomer, setVisibleToCustomer] = useState(true);
 
   const bookingsQuery = useQuery({
-    queryKey: ["completion-bookings", user?.id, user?.workspaceScope],
+    queryKey: ["completion-bookings", user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
     queryFn: () => getBookings({ sort: "startsAtDesc" }, user ?? undefined),
   });
   const eligibleBookings = useMemo(
@@ -38,13 +40,13 @@ export function CompletionPage() {
   }, [eligibleBookings, selectedBookingId]);
 
   const detailQuery = useQuery({
-    queryKey: ["completion-booking-detail", selectedBookingId],
-    queryFn: () => getBookingDetail(selectedBookingId),
+    queryKey: ["completion-booking-detail", selectedBookingId, user?.id, user?.businessId],
+    queryFn: () => getBookingDetail(selectedBookingId, user ?? undefined),
     enabled: Boolean(selectedBookingId),
   });
   const sharedReportsQuery = useQuery({
-    queryKey: ["completion-shared-reports", detailQuery.data?.customer.id],
-    queryFn: () => getSharedReports(detailQuery.data!.customer.id),
+    queryKey: ["completion-shared-reports", detailQuery.data?.customer.id, user?.id, user?.businessId],
+    queryFn: () => getSharedReports(detailQuery.data!.customer.id, user ?? undefined),
     enabled: Boolean(detailQuery.data?.customer.id),
   });
 
@@ -52,17 +54,42 @@ export function CompletionPage() {
     mutationFn: () =>
       createConsultationSummary({
         bookingId: selectedBookingId,
+        transcript,
         internalMemo,
         customerSummary,
         recommendations,
+        visibleToCustomer,
         deliveredReportIds: selectedReportIds,
         sendReviewRequest,
-      }),
+      }, user ?? undefined),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["bookings"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
       queryClient.invalidateQueries({ queryKey: ["completion-booking-detail"] });
       queryClient.invalidateQueries({ queryKey: ["customer-detail"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-summary-jobs"] });
+    },
+  });
+
+  const aiSummaryMutation = useMutation({
+    mutationFn: () =>
+      generateConsultationSummary(
+        selectedBookingId,
+        {
+          transcript,
+          internalMemo,
+          visibleToCustomer,
+        },
+        user ?? undefined,
+      ),
+    onSuccess: (result) => {
+      setInternalMemo(result.summary.internalMemo);
+      setCustomerSummary(result.summary.customerSummary);
+      setRecommendations(result.summary.recommendations);
+      setVisibleToCustomer(result.summary.visibleToCustomer);
+      queryClient.invalidateQueries({ queryKey: ["admin-summary-jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["completion-booking-detail"] });
     },
   });
 
@@ -108,6 +135,19 @@ export function CompletionPage() {
                   ))}
                 </SelectInput>
               </Field>
+              <Field label="전화상담 transcript" hint="전화 연동 전 v1에서는 상담사가 통화 내용 또는 메모를 붙여넣습니다.">
+                <TextArea value={transcript} onChange={(event) => setTranscript(event.target.value)} placeholder="고객 발화와 전문가 안내를 시간순으로 입력하면 AI 요약 초안을 생성합니다." />
+              </Field>
+              <Button
+                type="button"
+                variant="secondary"
+                icon={<Sparkles size={16} />}
+                disabled={aiSummaryMutation.isPending || (!transcript.trim() && !internalMemo.trim()) || !selectedBookingId}
+                onClick={() => aiSummaryMutation.mutate()}
+              >
+                {aiSummaryMutation.isPending ? "AI 요약 생성 중" : "OpenAI 요약 초안 생성"}
+              </Button>
+              {aiSummaryMutation.isError ? <div className="form-error">{aiSummaryMutation.error.message}</div> : null}
               <Field label="내부 메모" hint="운영자와 전문가만 볼 내용입니다.">
                 <TextArea value={internalMemo} onChange={(event) => setInternalMemo(event.target.value)} placeholder="다음 상담에서 확인할 점, 민감한 운영 메모 등을 적어주세요." />
               </Field>
@@ -143,6 +183,14 @@ export function CompletionPage() {
                   ))
                 )}
               </section>
+
+              <label className="switch-row">
+                <span className="cell-main">
+                  <strong>고객 앱 공개</strong>
+                  <span>공개 요약만 고객 앱에서 조회됩니다.</span>
+                </span>
+                <input type="checkbox" checked={visibleToCustomer} onChange={(event) => setVisibleToCustomer(event.target.checked)} />
+              </label>
 
               <label className="switch-row">
                 <span className="cell-main">

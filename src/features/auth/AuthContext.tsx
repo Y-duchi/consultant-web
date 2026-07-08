@@ -1,11 +1,12 @@
 import { createContext, useContext, useMemo, useState } from "react";
-import { mockLogin, type LoginRequest } from "../../services/api";
+import { completePartnerPasswordChange, mockLogin, type LoginRequest } from "../../services/api";
 import type { AuthUser } from "../../types/domain";
 
 interface AuthContextValue {
   user: AuthUser | null;
   isAuthenticated: boolean;
   login: (request: LoginRequest) => Promise<void>;
+  completePasswordChange: (nextPassword: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -24,6 +25,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isAuthenticated: Boolean(user),
       login: async (request) => {
         const nextUser = await mockLogin(request);
+        setUser(nextUser);
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextUser));
+      },
+      completePasswordChange: async (nextPassword) => {
+        if (!user?.accountId) {
+          throw new Error("파트너 계정 정보가 없습니다.");
+        }
+        await completePartnerPasswordChange(user.accountId, nextPassword);
+        const nextUser = { ...user, passwordChangeRequired: false };
         setUser(nextUser);
         window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextUser));
       },

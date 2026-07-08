@@ -1224,6 +1224,10 @@ a {
   width: min(760px, 100%);
 }
 
+.password-change-panel {
+  width: min(520px, 100%);
+}
+
 .login-panel h1 {
   margin: 0 0 8px;
   font-size: 24px;
@@ -1246,6 +1250,10 @@ a {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   margin: 18px 0;
+}
+
+.entry-mode-grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .entry-mode {
@@ -1298,6 +1306,22 @@ a {
   line-height: 1.45;
 }
 
+.status-icon {
+  width: 54px;
+  height: 54px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16px;
+  color: var(--primary);
+  background: rgba(23, 108, 95, 0.1);
+}
+
+.status-icon.success {
+  color: var(--success);
+  background: rgba(34, 197, 94, 0.12);
+}
+
 .login-footer {
   margin-top: 16px;
   padding-top: 14px;
@@ -1305,6 +1329,126 @@ a {
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.form-error {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--danger);
+  border-radius: 7px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.application-entry {
+  display: grid;
+  gap: 12px;
+}
+
+.apply-panel {
+  width: min(920px, 100%);
+}
+
+.apply-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.document-upload-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.application-result {
+  display: grid;
+  gap: 16px;
+}
+
+.application-result h1 {
+  margin-bottom: 0;
+}
+
+.result-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.result-summary > div {
+  min-height: 72px;
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #fff;
+}
+
+.result-summary span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.result-summary strong {
+  font-size: 14px;
+}
+
+.application-detail {
+  display: grid;
+  gap: 18px;
+}
+
+.detail-section {
+  display: grid;
+  gap: 12px;
+}
+
+.detail-section h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.application-document {
+  gap: 10px;
+}
+
+.document-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.credential-box {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--success-soft);
+}
+
+.generated-account .credential-box strong {
+  font-size: 14px;
 }
 
 @media (max-width: 1240px) {

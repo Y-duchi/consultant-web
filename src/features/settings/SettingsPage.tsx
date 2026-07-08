@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plug, Save } from "lucide-react";
 import { getBusinessProfile, getSettings, updateBusinessProfile, updateSettings } from "../../services/api";
+import { useAuth } from "../auth/AuthContext";
 import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Field, SelectInput, TextArea, TextInput } from "../../shared/ui/Field";
@@ -10,9 +11,10 @@ import { ErrorState, LoadingState } from "../../shared/ui/StateViews";
 import type { ManagerSettings, OperatingHours } from "../../types/domain";
 
 export function SettingsPage() {
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const settingsQuery = useQuery({ queryKey: ["settings"], queryFn: getSettings });
-  const businessQuery = useQuery({ queryKey: ["business-profile"], queryFn: getBusinessProfile });
+  const businessQuery = useQuery({ queryKey: ["business-profile", user?.businessId], queryFn: () => getBusinessProfile(user ?? undefined) });
   const [settingsDraft, setSettingsDraft] = useState<Partial<ManagerSettings>>({});
   const [policyDraft, setPolicyDraft] = useState({ cancellationPolicy: "", refundPolicy: "" });
   const [holidayDraft, setHolidayDraft] = useState("");
@@ -34,7 +36,7 @@ export function SettingsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings"] }),
   });
   const policyMutation = useMutation({
-    mutationFn: () => updateBusinessProfile(policyDraft),
+    mutationFn: () => updateBusinessProfile(policyDraft, user ?? undefined),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["business-profile"] }),
   });
 

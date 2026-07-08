@@ -1,50 +1,34 @@
 import { FormEvent, useState } from "react";
-import { Building2, CheckCircle2, FileBadge2, LogIn, ShieldCheck } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Building2, FilePlus2, KeyRound, LogIn, ShieldCheck } from "lucide-react";
 import { useAuth } from "./AuthContext";
 import { Button } from "../../shared/ui/Button";
-import { Field, SelectInput, TextInput } from "../../shared/ui/Field";
-import type { PartnerType, UserRole, WorkspaceScope } from "../../types/domain";
+import { Field, TextInput } from "../../shared/ui/Field";
 
-type EntryMode = "admin" | "partner";
+type EntryMode = "admin" | "partner" | "apply";
 
 export function LoginPage() {
   const { login } = useAuth();
   const [entryMode, setEntryMode] = useState<EntryMode>("partner");
-  const [email, setEmail] = useState("partner@aura.example");
-  const [role, setRole] = useState<UserRole>("business_manager");
-  const [workspaceScope, setWorkspaceScope] = useState<WorkspaceScope>("business_operations");
-  const [partnerType, setPartnerType] = useState<PartnerType>("business");
-  const [businessName, setBusinessName] = useState("AURA 성수 메이크업 스튜디오");
-  const [businessRegistrationNumber, setBusinessRegistrationNumber] = useState("123-45-67890");
-  const [verificationFileName, setVerificationFileName] = useState("사업자등록증_AURA성수.pdf");
+  const [adminEmail, setAdminEmail] = useState("admin@aura.example");
+  const [partnerEmail, setPartnerEmail] = useState("partner@aura.example");
+  const [password, setPassword] = useState("AuraTemp!2026");
+  const [error, setError] = useState("");
   const [isSubmitting, setSubmitting] = useState(false);
-
-  const selectMode = (mode: EntryMode) => {
-    setEntryMode(mode);
-    if (mode === "admin") {
-      setRole("admin");
-      setWorkspaceScope("business_operations");
-      setEmail("admin@aura.example");
-    } else {
-      setRole("business_manager");
-      setWorkspaceScope("business_operations");
-      setEmail("partner@aura.example");
-    }
-  };
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
+    if (entryMode === "apply") return;
+    setError("");
     setSubmitting(true);
     try {
       await login({
-        email,
-        role,
-        workspaceScope,
-        partnerType,
-        businessName,
-        businessRegistrationNumber,
-        verificationFileName,
+        email: entryMode === "admin" ? adminEmail : partnerEmail,
+        password,
+        role: entryMode === "admin" ? "admin" : "business_manager",
       });
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "로그인에 실패했습니다.");
     } finally {
       setSubmitting(false);
     }
@@ -54,73 +38,70 @@ export function LoginPage() {
     <main className="login-page">
       <section className="login-panel login-panel-wide">
         <h1>AURA 파트너 매니저</h1>
-        <p>뷰티 종합 플랫폼 앱에서 들어온 전문가 상담 예약, 리포트, 고객 대화, 정산과 업체 검수를 관리합니다.</p>
+        <p>관리자는 입점 심사와 전체 운영을 보고, 승인된 업체/전문가는 예약·고객·상담 리포트를 관리합니다.</p>
 
-        <div className="entry-mode-grid" role="tablist" aria-label="입장 유형">
-          <button className={`entry-mode ${entryMode === "admin" ? "is-active" : ""}`} type="button" onClick={() => selectMode("admin")}>
+        <div className="entry-mode-grid three" role="tablist" aria-label="입장 유형">
+          <button className={`entry-mode ${entryMode === "admin" ? "is-active" : ""}`} type="button" onClick={() => setEntryMode("admin")}>
             <ShieldCheck size={22} />
-            <strong>플랫폼 관리자</strong>
-            <span>업체 검수, 전문가 노출, 신고/리뷰, 전체 운영을 확인합니다.</span>
+            <strong>관리자 로그인</strong>
+            <span>입점 신청 검토, 서류 확인, 승인과 계정 발급을 처리합니다.</span>
           </button>
-          <button className={`entry-mode ${entryMode === "partner" ? "is-active" : ""}`} type="button" onClick={() => selectMode("partner")}>
+          <button className={`entry-mode ${entryMode === "partner" ? "is-active" : ""}`} type="button" onClick={() => setEntryMode("partner")}>
             <Building2 size={22} />
-            <strong>업체/프리랜서 파트너</strong>
-            <span>내 예약, 고객 리포트, 상담 완료 노트, 프로필과 정산을 관리합니다.</span>
+            <strong>업체/전문가 로그인</strong>
+            <span>승인된 계정으로 예약, 고객, 채팅, 리뷰와 프로필을 관리합니다.</span>
+          </button>
+          <button className={`entry-mode ${entryMode === "apply" ? "is-active" : ""}`} type="button" onClick={() => setEntryMode("apply")}>
+            <FilePlus2 size={22} />
+            <strong>입점 신청</strong>
+            <span>승인 전 업체/전문가 상태로 서류와 기본 정보를 제출합니다.</span>
           </button>
         </div>
 
-        <form className="login-form" onSubmit={handleSubmit}>
-          <Field label="이메일">
-            <TextInput value={email} onChange={(event) => setEmail(event.target.value)} placeholder="partner@aura.example" />
-          </Field>
-          {entryMode === "partner" ? (
-            <>
-              <div className="form-grid">
-                <Field label="파트너 유형">
-                  <SelectInput value={partnerType} onChange={(event) => setPartnerType(event.target.value as PartnerType)}>
-                    <option value="business">사업자 업체</option>
-                    <option value="freelancer">프리랜서 전문가</option>
-                  </SelectInput>
-                </Field>
-                <Field label="워크스페이스">
-                  <SelectInput value={workspaceScope} onChange={(event) => setWorkspaceScope(event.target.value as WorkspaceScope)}>
-                    <option value="business_operations">업체 전체 운영</option>
-                    <option value="expert_personal">전문가 개인 예약만</option>
-                  </SelectInput>
-                </Field>
-              </div>
-              <Field label={partnerType === "business" ? "업체명" : "활동명/전문가명"}>
-                <TextInput value={businessName} onChange={(event) => setBusinessName(event.target.value)} />
-              </Field>
-              <Field label={partnerType === "business" ? "사업자등록번호" : "신분/자격 확인 번호"}>
-                <TextInput value={businessRegistrationNumber} onChange={(event) => setBusinessRegistrationNumber(event.target.value)} placeholder="123-45-67890" />
-              </Field>
-              <Field label={partnerType === "business" ? "사업자등록증 또는 통신판매업 증빙" : "자격증/신분 확인 증빙"}>
-                <TextInput value={verificationFileName} onChange={(event) => setVerificationFileName(event.target.value)} placeholder="증빙 파일명.pdf" />
-              </Field>
-              <div className="verification-note">
-                <FileBadge2 size={18} />
-                <div>
-                  <strong>Mock 인증 제출</strong>
-                  <span>실서비스에서는 사업자등록증 OCR, 대표자 확인, 정산 계좌 검증, S3 presigned 업로드로 교체합니다.</span>
-                </div>
-              </div>
-            </>
-          ) : (
+        {entryMode === "apply" ? (
+          <div className="application-entry">
             <div className="verification-note">
-              <CheckCircle2 size={18} />
+              <FilePlus2 size={18} />
               <div>
-                <strong>관리자 모드</strong>
-                <span>파트너 인증 상태, 앱 노출 상태, 리뷰/신고와 전체 상담 운영을 보는 내부 계정입니다.</span>
+                <strong>사업자등록증과 국가 미용사 면허증 PDF가 필요합니다</strong>
+                <span>신청 후에는 관리자 검토 상태만 확인할 수 있고, 승인 후 운영 계정이 발급됩니다.</span>
               </div>
             </div>
-          )}
-          <Button type="submit" variant="primary" icon={<LogIn size={17} />} disabled={isSubmitting}>
-            {isSubmitting ? "로그인 중" : "Mock 로그인으로 입장"}
-          </Button>
-        </form>
+            <Link to="/apply">
+              <Button variant="primary" icon={<FilePlus2 size={17} />}>
+                입점 신청서 작성
+              </Button>
+            </Link>
+          </div>
+        ) : (
+          <form className="login-form" onSubmit={handleSubmit}>
+            <Field label="이메일">
+              <TextInput
+                type="email"
+                value={entryMode === "admin" ? adminEmail : partnerEmail}
+                onChange={(event) => (entryMode === "admin" ? setAdminEmail(event.target.value) : setPartnerEmail(event.target.value))}
+              />
+            </Field>
+            <Field label={entryMode === "admin" ? "관리자 비밀번호" : "임시 비밀번호"}>
+              <TextInput type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+            </Field>
+            {entryMode === "partner" ? (
+              <div className="verification-note">
+                <KeyRound size={18} />
+                <div>
+                  <strong>승인 전 이메일로 로그인하면 심사 상태 화면으로 이동합니다</strong>
+                  <span>승인 완료 계정은 첫 로그인 후 비밀번호 변경 예정 UI가 표시됩니다.</span>
+                </div>
+              </div>
+            ) : null}
+            {error ? <div className="form-error">{error}</div> : null}
+            <Button type="submit" variant="primary" icon={<LogIn size={17} />} disabled={isSubmitting}>
+              {isSubmitting ? "로그인 중" : "로그인"}
+            </Button>
+          </form>
+        )}
         <div className="login-footer">
-          지금은 프론트 mock입니다. 추후 FastAPI 인증, 관리자/파트너 권한, 사업자 검수 API, S3 업로드, 정산 계좌 인증으로 교체할 수 있도록 분리했습니다.
+          실서비스에서는 관리자 SSO, 파트너 계정 발급, 첫 로그인 비밀번호 변경, 이메일/SMS 전달, 권한별 메뉴 제어로 연결됩니다.
         </div>
       </section>
     </main>

@@ -15,12 +15,12 @@ export function DashboardPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const summaryQuery = useQuery({
-    queryKey: ["dashboard-summary", user?.id, user?.workspaceScope],
+    queryKey: ["dashboard-summary", user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
     queryFn: () => getDashboardSummary(user ?? undefined),
   });
   const businessQuery = useQuery({
-    queryKey: ["business-profile"],
-    queryFn: getBusinessProfile,
+    queryKey: ["business-profile", user?.businessId],
+    queryFn: () => getBusinessProfile(user ?? undefined),
   });
 
   if (summaryQuery.isLoading || businessQuery.isLoading) return <LoadingState label="파트너 운영 현황을 불러오는 중입니다" />;
@@ -43,15 +43,15 @@ export function DashboardPage() {
   return (
     <>
       <PageHeader
-        eyebrow={user?.role === "admin" ? "Platform Admin" : "Beauty Partner"}
-        title={user?.role === "admin" ? "파트너 검수와 앱 상담 운영" : "오늘 앱에서 들어온 뷰티 상담 운영"}
+        eyebrow="Beauty Partner"
+        title="오늘 앱에서 들어온 뷰티 상담 운영"
         description="고객 앱의 전문가 선택, 리포트 선택, 시간 예약, 결제 흐름이 웹 매니저에서 예약·고객관리·리포트 전달 업무로 이어지도록 구성했습니다."
         actions={
           <>
-            <Button variant="secondary" icon={<ArrowRight size={17} />} onClick={() => navigate("/bookings")}>
+            <Button variant="secondary" icon={<ArrowRight size={17} />} onClick={() => navigate("/workspace/bookings")}>
               앱 예약 보기
             </Button>
-            <Button variant="primary" icon={<ArrowRight size={17} />} onClick={() => navigate("/completion")}>
+            <Button variant="primary" icon={<ArrowRight size={17} />} onClick={() => navigate("/workspace/completion")}>
               처방 노트 작성
             </Button>
           </>
@@ -72,7 +72,7 @@ export function DashboardPage() {
             {business ? <BusinessVerificationBadge status={business.verificationStatus} /> : null}
             <span className="tag">앱 노출 {business?.exposureStatus === "public" ? "공개" : "검수중"}</span>
           </div>
-          <Button variant="secondary" icon={<BadgeCheck size={17} />} onClick={() => navigate("/profile")}>
+            <Button variant="secondary" icon={<BadgeCheck size={17} />} onClick={() => navigate("/workspace/profile")}>
             인증/프로필 관리
           </Button>
         </div>
@@ -100,7 +100,7 @@ export function DashboardPage() {
               <h2>오늘의 일정 타임라인</h2>
               <p>고객 앱에서 결제한 화상 상담을 시간순으로 확인합니다.</p>
             </div>
-            <Link to="/bookings" className="muted">전체 예약 보기</Link>
+            <Link to="/workspace/bookings" className="muted">전체 예약 보기</Link>
           </div>
           <div className="panel-body">
             {summary.todayTimeline.length === 0 ? (
@@ -165,9 +165,9 @@ export function DashboardPage() {
 }
 
 function getTaskPath(type: string) {
-  if (type === "message") return "/chat";
-  if (type === "review") return "/reviews";
-  if (type === "verification") return "/profile";
-  if (type === "report" || type === "completion") return "/completion";
-  return "/bookings";
+  if (type === "message") return "/workspace/chat";
+  if (type === "review") return "/workspace/reviews";
+  if (type === "verification") return "/workspace/profile";
+  if (type === "report" || type === "completion") return "/workspace/completion";
+  return "/workspace/bookings";
 }

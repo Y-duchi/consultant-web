@@ -25,7 +25,7 @@ export function ReviewsPage() {
   const [reply, setReply] = useState("");
 
   const reviewsQuery = useQuery({
-    queryKey: ["reviews", query, status, rating, sort, user?.id, user?.workspaceScope],
+    queryKey: ["reviews", query, status, rating, sort, user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
     queryFn: () => getReviews({ query, status, rating, sort }, user ?? undefined),
   });
   const reviews = useMemo(() => {
@@ -35,8 +35,8 @@ export function ReviewsPage() {
   }, [createdAfter, reviewsQuery.data]);
   const selectedReview = reviewsQuery.data?.find((review) => review.id === selectedReviewId);
   const detailQuery = useQuery({
-    queryKey: ["review-booking-detail", selectedReview?.bookingId],
-    queryFn: () => getBookingDetail(selectedReview!.bookingId),
+    queryKey: ["review-booking-detail", selectedReview?.bookingId, user?.id, user?.businessId],
+    queryFn: () => getBookingDetail(selectedReview!.bookingId, user ?? undefined),
     enabled: Boolean(selectedReview?.bookingId),
   });
 
