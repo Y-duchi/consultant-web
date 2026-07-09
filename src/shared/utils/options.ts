@@ -2,6 +2,9 @@ import type { BookingStatus, PaymentStatus, ReviewStatus } from "../../types/dom
 
 export const bookingStatusOptions: Array<{ value: BookingStatus | "all"; label: string }> = [
   { value: "all", label: "전체 상태" },
+  { value: "requested", label: "신청" },
+  { value: "contacting", label: "확인중" },
+  { value: "confirmed", label: "확정" },
   { value: "scheduled", label: "예정" },
   { value: "in_progress", label: "진행중" },
   { value: "completed", label: "완료" },

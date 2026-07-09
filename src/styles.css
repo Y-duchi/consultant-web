@@ -879,16 +879,19 @@ a {
 }
 
 .booking-pill.cancelled,
-.booking-pill.no_show {
+.booking-pill.no_show,
+.booking-pill.requested {
   border-left-color: var(--border-strong);
   opacity: 0.72;
 }
 
-.booking-pill.refund_requested {
+.booking-pill.refund_requested,
+.booking-pill.contacting {
   border-left-color: var(--danger);
 }
 
-.booking-pill.completed {
+.booking-pill.completed,
+.booking-pill.confirmed {
   border-left-color: var(--success);
 }
 
@@ -1070,19 +1073,25 @@ a {
   max-width: 74%;
   display: grid;
   gap: 4px;
+  align-self: flex-start;
 }
 
 .message.mine {
   align-self: flex-end;
+  justify-items: end;
 }
 
 .message-bubble {
+  width: fit-content;
+  max-width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #fff;
   line-height: 1.48;
   font-size: 13px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .message.mine .message-bubble {
@@ -1094,6 +1103,29 @@ a {
 .message small {
   color: var(--text-soft);
   font-size: 11px;
+}
+
+.message-image {
+  border-radius: 8px;
+  display: block;
+  margin-top: 8px;
+  max-width: 240px;
+  width: min(240px, 100%);
+}
+
+.closed-thread-banner {
+  align-self: stretch;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--text-soft);
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+}
+
+.closed-thread-banner strong {
+  color: var(--text);
 }
 
 .realtime-toast {
@@ -1116,6 +1148,45 @@ a {
   gap: 8px;
   padding: 12px;
   border-top: 1px solid var(--border);
+}
+
+.composer-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.attachment-preview-row {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+}
+
+.attachment-preview {
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text-soft);
+  cursor: pointer;
+  display: inline-flex;
+  gap: 6px;
+  max-width: 180px;
+  min-height: 32px;
+  padding: 4px 8px 4px 4px;
+}
+
+.attachment-preview img {
+  border-radius: 6px;
+  height: 26px;
+  object-fit: cover;
+  width: 26px;
+}
+
+.attachment-preview span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat-side {

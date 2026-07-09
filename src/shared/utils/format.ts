@@ -39,6 +39,9 @@ export const formatCurrency = (amount: number) =>
   }).format(amount);
 
 export const bookingStatusLabel: Record<BookingStatus, string> = {
+  requested: "신청",
+  contacting: "확인중",
+  confirmed: "확정",
   scheduled: "예정",
   in_progress: "진행중",
   completed: "완료",

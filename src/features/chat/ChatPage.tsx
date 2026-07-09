@@ -1,5 +1,5 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BellRing, FileImage, FileText, Phone, Search, Send } from "lucide-react";
 import {
   createPhoneAction,
@@ -7,7 +7,9 @@ import {
   getChatThreads,
   getPartnerSessionToken,
   getSharedReportDetail,
+  markChatThreadRead,
   type SharedReportDetail,
+  uploadChatAttachment,
 } from "../../services/api";
 import {
   connectConsultingConversationSocket,
@@ -23,18 +25,28 @@ import { TextInput } from "../../shared/ui/Field";
 import { PageHeader } from "../../shared/ui/PageHeader";
 import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/StateViews";
 import { formatDateTime, formatTime } from "../../shared/utils/format";
-import type { AuthUser, ChatMessage } from "../../types/domain";
+import type { Attachment, AuthUser, BookingStatus, ChatMessage } from "../../types/domain";
 
 export function ChatPage() {
   const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const lastMarkedReadThreadRef = useRef<string | null>(null);
   const socketRef = useRef<ConsultingConversationSocketClient | null>(null);
   const [query, setQuery] = useState("");
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [socketStatus, setSocketStatus] = useState<ConsultingSocketStatus>("idle");
   const [liveMessages, setLiveMessages] = useState<LiveChatMessage[]>([]);
+  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
   const [realtimeNotice, setRealtimeNotice] = useState<string | null>(null);
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
+  const uploadMutation = useMutation({
+    mutationFn: (file: File) => uploadChatAttachment(file, user ?? undefined),
+    onSuccess: (attachment) => {
+      setPendingAttachments((current) => [...current, attachment]);
+    },
+  });
 
   const threadsQuery = useQuery({
     queryKey: ["chat-threads", user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
@@ -66,6 +78,7 @@ export function ChatPage() {
     enabled: Boolean(selectedReportId),
   });
   const activeBookingId = detail?.booking?.id;
+  const isClosedBooking = Boolean(detail?.booking && isClosedBookingStatus(detail.booking.status));
   const socketBookingId = useMemo(() => {
     const override = new URLSearchParams(window.location.search).get("bookingId")?.trim();
     return override || activeBookingId;
@@ -73,8 +86,20 @@ export function ChatPage() {
 
   useEffect(() => {
     setLiveMessages(detail?.messages ?? []);
+    setPendingAttachments([]);
     setSelectedReportId(null);
   }, [detail?.thread.id]);
+
+  useEffect(() => {
+    if (!detail?.thread.id || lastMarkedReadThreadRef.current === detail.thread.id) return;
+    lastMarkedReadThreadRef.current = detail.thread.id;
+    void markChatThreadRead(detail.thread.id, user ?? undefined)
+      .then(() => {
+        void threadsQuery.refetch();
+        queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      })
+      .catch(() => undefined);
+  }, [detail?.thread.id, queryClient, threadsQuery, user]);
 
   useEffect(() => {
     if (!socketBookingId || !detail) {
@@ -116,6 +141,14 @@ export function ChatPage() {
           if (nextMessage.senderType === "customer") {
             setRealtimeNotice(`${nextMessage.senderName} 고객 메시지가 도착했습니다.`);
             window.setTimeout(() => setRealtimeNotice(null), 4200);
+            socketRef.current?.send({
+              bookingId: socketBookingId,
+              readAt: new Date().toISOString(),
+              type: "read",
+            });
+            void markChatThreadRead(detail.thread.id, user ?? undefined)
+              .then(() => threadsQuery.refetch())
+              .catch(() => undefined);
             void threadsQuery.refetch();
             void detailQuery.refetch();
           }
@@ -152,6 +185,7 @@ export function ChatPage() {
         bookingId: socketBookingId,
         body: targetMessage.body,
         clientMessageId: targetMessage.clientMessageId ?? targetMessage.id,
+        mediaIds: targetMessage.attachments.map((attachment) => attachment.id),
       }),
     );
   };
@@ -178,21 +212,23 @@ export function ChatPage() {
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
-    if (!message.trim() || !activeThreadId || !detail || !socketBookingId || socketStatus !== "connected") return;
+    const body = message.trim();
+    if ((!body && pendingAttachments.length === 0) || !activeThreadId || !detail || !socketBookingId || socketStatus !== "connected" || isClosedBooking) return;
     const clientMessageId = createClientMessageId();
     const nextMessage: LiveChatMessage = {
       id: clientMessageId,
       threadId: detail.thread.id,
       senderType: getOutgoingSenderType(user),
       senderName: user?.name ?? "운영팀",
-      body: message.trim(),
+      body,
       sentAt: new Date().toISOString(),
-      attachments: [],
+      attachments: pendingAttachments,
       clientMessageId,
       deliveryStatus: "pending",
     };
     setLiveMessages((current) => [...current, nextMessage]);
     setMessage("");
+    setPendingAttachments([]);
 
     if (!sendLiveMessage(nextMessage)) {
       setLiveMessages((current) =>
@@ -201,6 +237,13 @@ export function ChatPage() {
         ),
       );
     }
+  };
+
+  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    uploadMutation.mutate(file);
   };
 
   if (threadsQuery.isLoading) return <LoadingState label="고객 대화를 불러오는 중입니다" />;
@@ -235,7 +278,13 @@ export function ChatPage() {
             >
               <div className="thread-meta">
                 <strong>{item.customer.name}</strong>
-                {item.thread.unreadCount > 0 ? <Badge tone="danger">{item.thread.unreadCount}</Badge> : <span className="muted">{formatTime(item.thread.lastMessageAt)}</span>}
+                {item.booking && isClosedBookingStatus(item.booking.status) ? (
+                  <Badge>취소됨</Badge>
+                ) : item.thread.unreadCount > 0 ? (
+                  <Badge tone="danger">{item.thread.unreadCount}</Badge>
+                ) : (
+                  <span className="muted">{formatTime(item.thread.lastMessageAt)}</span>
+                )}
               </div>
               <span className="muted">{item.booking?.type ?? "일반 문의"} · {item.thread.channel}</span>
               <p className="muted">{lastMessage(item)?.body ?? "메시지 없음"}</p>
@@ -266,12 +315,18 @@ export function ChatPage() {
 
           <div className="message-list">
             {detailQuery.isLoading ? <LoadingState label="대화 내용을 불러오는 중입니다" /> : null}
+            {isClosedBooking ? (
+              <div className="closed-thread-banner">
+                <strong>취소된 예약입니다</strong>
+                <span>대화 기록은 확인할 수 있지만 새 메시지는 보낼 수 없습니다.</span>
+              </div>
+            ) : null}
             {liveMessages.map((item) => (
               <div className={`message ${item.senderType === "operator" || item.senderType === "expert" ? "mine" : ""}`} key={item.id}>
                 <div className="message-bubble">
-                  {item.body}
+                  {item.body ? <span>{item.body}</span> : null}
                   {item.attachments.filter((attachment) => attachment.url).map((attachment) => (
-                    <img alt="" key={attachment.id} src={attachment.url} style={{ borderRadius: 8, display: "block", marginTop: 8, maxWidth: 220, width: "100%" }} />
+                    <img alt="" className="message-image" key={attachment.id} src={attachment.url} />
                   ))}
                 </div>
                 <small>{item.senderName} · {formatDateTime(item.sentAt)}{getDeliveryLabel(item)}</small>
@@ -285,11 +340,30 @@ export function ChatPage() {
           </div>
 
           <form className="composer" onSubmit={handleSubmit}>
-            <Button type="button" variant="secondary" icon={<FileImage size={16} />}>
-              첨부
+            <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={handleFileChange} />
+            <Button type="button" variant="secondary" icon={<FileImage size={16} />} disabled={isClosedBooking || uploadMutation.isPending} onClick={() => fileInputRef.current?.click()}>
+              {uploadMutation.isPending ? "첨부 중" : "첨부"}
             </Button>
-            <TextInput value={message} onChange={(event) => setMessage(event.target.value)} placeholder="고객에게 보낼 메시지를 입력하세요" />
-            <Button type="submit" variant="primary" icon={<Send size={16} />} disabled={!message.trim() || !socketBookingId || socketStatus !== "connected"}>
+            <div className="composer-field">
+              {pendingAttachments.length > 0 ? (
+                <div className="attachment-preview-row">
+                  {pendingAttachments.map((attachment) => (
+                    <button
+                      className="attachment-preview"
+                      key={attachment.id}
+                      type="button"
+                      onClick={() => setPendingAttachments((current) => current.filter((item) => item.id !== attachment.id))}
+                    >
+                      {attachment.url ? <img alt="" src={attachment.url} /> : <FileImage size={15} />}
+                      <span>{attachment.name}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              {uploadMutation.isError ? <span className="form-error">{uploadMutation.error.message}</span> : null}
+              <TextInput disabled={isClosedBooking} value={message} onChange={(event) => setMessage(event.target.value)} placeholder={isClosedBooking ? "취소된 예약에는 메시지를 보낼 수 없습니다" : "고객에게 보낼 메시지를 입력하세요"} />
+            </div>
+            <Button type="submit" variant="primary" icon={<Send size={16} />} disabled={(!message.trim() && pendingAttachments.length === 0) || !socketBookingId || socketStatus !== "connected" || isClosedBooking || uploadMutation.isPending}>
               전송
             </Button>
           </form>
@@ -410,6 +484,10 @@ function getDeliveryLabel(message: LiveChatMessage) {
   if (message.deliveryStatus === "pending") return " · 전송 중";
   if (message.deliveryStatus === "failed") return " · 전송 실패";
   return "";
+}
+
+function isClosedBookingStatus(status: BookingStatus) {
+  return status === "cancelled" || status === "no_show" || status === "refund_requested";
 }
 
 function getReportDetailEntries(reportDetail: SharedReportDetail) {

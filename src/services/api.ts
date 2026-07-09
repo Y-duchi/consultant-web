@@ -168,13 +168,17 @@ function rememberSharedReports(records: SharedReport[]) {
   sharedReports = upsertById(sharedReports, records);
 }
 
+function rememberConsultationSummaries(records: ConsultationSummary[]) {
+  consultationSummaries = upsertById(consultationSummaries, records);
+}
+
 function rememberBookingDetail(detail: BookingDetail) {
   rememberBookings([detail.booking]);
   rememberCustomers([detail.customer]);
   rememberExperts([detail.expert]);
   rememberSharedReports(detail.sharedReports);
   if (detail.consultationSummary) {
-    consultationSummaries = upsertById(consultationSummaries, [detail.consultationSummary]);
+    rememberConsultationSummaries([detail.consultationSummary]);
   }
   if (detail.review) {
     reviews = upsertById(reviews, [detail.review]);
@@ -202,6 +206,25 @@ function rememberChatDetail(detail: ChatThreadDetail) {
     ...detail.messages,
   ];
 }
+
+type PartnerUpload = {
+  bucket: string;
+  cacheControl?: string | null;
+  cdnUrl?: string | null;
+  expiresIn?: number;
+  method?: string;
+  objectKey: string;
+  uploadUrl: string;
+};
+
+type PartnerMedia = {
+  id: string;
+  cdnUrl?: string | null;
+  contentType?: string | null;
+  createdAt?: string | null;
+  originalFilename?: string | null;
+  thumbnailCdnUrl?: string | null;
+};
 
 async function rememberPartnerWorkspaceLookups() {
   const [customersData, expertsData] = await Promise.all([
@@ -593,7 +616,7 @@ export async function getDashboardSummary(user?: AuthUser): Promise<DashboardSum
   const scopedBusiness = businessProfiles.find((business) => business.id === user?.businessId) ?? businessProfiles[0];
   const today = todayDate();
   const todayBookings = scopedBookings.filter((booking) => dateKey(booking.startsAt) === today);
-  const upcoming = scopedBookings.filter((booking) => ["scheduled", "in_progress"].includes(booking.status));
+  const upcoming = scopedBookings.filter((booking) => ["requested", "contacting", "confirmed", "scheduled", "in_progress"].includes(booking.status));
   const pendingCompletion = scopedBookings.filter((booking) => {
     const isPastOrToday = dateKey(booking.startsAt) <= today;
     return isPastOrToday && !["completed", "cancelled", "no_show", "refund_requested"].includes(booking.status);
@@ -867,6 +890,92 @@ export async function getChatThreadDetail(threadId: string, user?: AuthUser): Pr
   return clone(makeChatThreadDetail(thread));
 }
 
+export async function markChatThreadRead(threadId: string, user?: AuthUser): Promise<ChatThreadDetail> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<{ detail: ChatThreadDetail }>(
+      `/chat/threads/${encodeURIComponent(threadId)}/read`,
+      { method: "POST" },
+    );
+    rememberChatDetail(data.detail);
+    return clone(data.detail);
+  }
+  await delay(120);
+  const thread = findThread(threadId, user);
+  thread.unreadCount = 0;
+  thread.status = "open";
+  return clone(makeChatThreadDetail(thread));
+}
+
+export async function uploadChatAttachment(file: File, user?: AuthUser): Promise<Attachment> {
+  if (shouldUsePartnerApi(user)) {
+    const contentType = file.type || "application/octet-stream";
+    const { upload } = await requestPartnerJson<{ upload: PartnerUpload }>(
+      "/media/presigned-upload",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          byteSize: file.size,
+          contentType,
+          mediaKind: "consulting-chat",
+          originalFilename: file.name || "chat-image",
+          source: "gallery",
+        }),
+      },
+    );
+
+    const uploadResponse = await fetch(upload.uploadUrl, {
+      method: upload.method || "PUT",
+      headers: {
+        "Content-Type": contentType,
+        ...(upload.cacheControl ? { "Cache-Control": upload.cacheControl } : {}),
+      },
+      body: file,
+    });
+
+    if (!uploadResponse.ok) {
+      throw new Error("사진 업로드에 실패했습니다.");
+    }
+
+    const { media } = await requestPartnerJson<{ media: PartnerMedia }>(
+      "/media/complete-upload",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          bucket: upload.bucket,
+          byteSize: file.size,
+          cdnUrl: upload.cdnUrl ?? null,
+          contentType,
+          mediaKind: "consulting-chat",
+          objectKey: upload.objectKey,
+          originalFilename: file.name || "chat-image",
+          source: "gallery",
+        }),
+      },
+    );
+
+    return {
+      id: media.id,
+      ownerId: user?.id ?? "partner",
+      type: "image",
+      name: media.originalFilename || file.name || "chat-image",
+      url: media.thumbnailCdnUrl || media.cdnUrl || upload.cdnUrl || "",
+      uploadedAt: media.createdAt || nowIso(),
+    };
+  }
+
+  await delay(180);
+  const attachment: Attachment = {
+    id: `att-chat-${Date.now()}`,
+    ownerId: user?.id ?? "mock-partner",
+    type: "image",
+    name: file.name || "chat-image",
+    url: URL.createObjectURL(file),
+    uploadedAt: nowIso(),
+  };
+  attachments = [...attachments, attachment];
+  return clone(attachment);
+}
+
 export async function sendMessage(threadId: string, body: string, attachmentIds: string[] = []): Promise<ChatMessage> {
   await delay();
   const thread = findThread(threadId);
@@ -956,12 +1065,38 @@ export async function getConsultationSummaryJobs(user?: AuthUser): Promise<Consu
 }
 
 export async function getConsultationSummaryForBooking(bookingId: string, user?: AuthUser): Promise<ConsultationSummary | undefined> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<{ summary: ConsultationSummary | null }>(`/summaries/${encodeURIComponent(bookingId)}`);
+    if (data.summary) {
+      rememberConsultationSummaries([data.summary]);
+    }
+    return clone(data.summary ?? undefined);
+  }
   await delay();
   findBooking(bookingId, user);
   return clone(consultationSummaries.find((summary) => summary.bookingId === bookingId));
 }
 
 export async function createConsultationSummary(draft: CompletionDraft, user?: AuthUser): Promise<ConsultationSummary> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<{ summary: ConsultationSummary }>(
+      `/summaries/${encodeURIComponent(draft.bookingId)}/complete`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          transcript: draft.transcript,
+          expertComment: draft.internalMemo,
+          customerSummary: draft.customerSummary,
+          recommendations: draft.recommendations,
+          visibleToCustomer: draft.visibleToCustomer,
+          deliveredReportIds: draft.deliveredReportIds,
+          sendReviewRequest: draft.sendReviewRequest,
+        }),
+      },
+    );
+    rememberConsultationSummaries([data.summary]);
+    return clone(data.summary);
+  }
   await delay();
   const booking = findBooking(draft.bookingId, user);
   if (booking.status === "cancelled" || booking.status === "no_show" || booking.status === "refund_requested") {
@@ -997,13 +1132,31 @@ export async function generateConsultationSummary(
   input: SummaryGenerateInput,
   user?: AuthUser,
 ): Promise<SummaryGenerateResult> {
+  if (shouldUsePartnerApi(user)) {
+    const transcript = input.transcript?.trim() ?? "";
+    if (!transcript) {
+      throw new Error("AI 요약 생성을 위해 화상상담 transcript가 필요합니다.");
+    }
+    const result = await requestPartnerJson<SummaryGenerateResult>(
+      `/summaries/${encodeURIComponent(bookingId)}/generate`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          transcript,
+          expertComment: input.internalMemo,
+          visibleToCustomer: input.visibleToCustomer,
+        }),
+      },
+    );
+    return clone(result);
+  }
   await delay(520);
   const booking = findBooking(bookingId, user);
   const transcript = input.transcript?.trim() ?? "";
   const internalMemo = input.internalMemo?.trim() ?? "";
-  const sourceText = transcript || internalMemo;
+  const sourceText = transcript;
   if (!sourceText) {
-    throw new Error("AI 요약 생성을 위해 transcript 또는 상담 메모가 필요합니다.");
+    throw new Error("AI 요약 생성을 위해 화상상담 transcript가 필요합니다.");
   }
 
   const job: ConsultationSummaryJob = {
@@ -1013,7 +1166,7 @@ export async function generateConsultationSummary(
     expertId: booking.expertId,
     requestedBy: user?.accountId ?? user?.id ?? "mock-user",
     status: "processing",
-    source: transcript ? "phone_transcript" : "manual_memo",
+    source: "phone_transcript",
     aiModel: "mock-openai-summary",
     createdAt: nowIso(),
     updatedAt: nowIso(),
@@ -1039,7 +1192,7 @@ export async function generateConsultationSummary(
     aiStatus: "succeeded",
     aiModel: job.aiModel,
     transcript,
-    internalMemo: internalMemo || `${customerName} 고객 상담 transcript 기반 AI 초안입니다. 원문 확인 후 필요한 운영 메모를 보강하세요.`,
+    internalMemo,
     customerSummary: `${customerName} 고객의 ${concernText} 상담 내용을 바탕으로 현재 고민, 전문가 판단, 적용 우선순위를 정리했습니다.`,
     recommendations: "오늘 바로 적용할 수 있는 1순위 액션을 먼저 안내하고, 다음 상담에서는 앱 리포트 변화와 실제 적용 사진을 함께 확인하세요.",
     visibleToCustomer: input.visibleToCustomer ?? true,

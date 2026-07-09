@@ -30,6 +30,9 @@ export function Badge({ children, tone = "neutral" }: BadgeProps) {
 
 export function BookingStatusBadge({ status }: { status: BookingStatus }) {
   const tone: Record<BookingStatus, BadgeTone> = {
+    requested: "warning",
+    contacting: "warning",
+    confirmed: "info",
     scheduled: "info",
     in_progress: "warning",
     completed: "success",

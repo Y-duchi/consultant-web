@@ -12,6 +12,9 @@ export type ConsultationSummaryAiStatus = "not_requested" | "queued" | "processi
 export type PaymentStatus = "pending" | "paid" | "failed" | "refunded" | "partial_refund";
 
 export type BookingStatus =
+  | "requested"
+  | "contacting"
+  | "confirmed"
   | "scheduled"
   | "in_progress"
   | "completed"

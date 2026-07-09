@@ -9,7 +9,7 @@ import { Button } from "../../shared/ui/Button";
 import { Field, SelectInput, TextArea } from "../../shared/ui/Field";
 import { PageHeader } from "../../shared/ui/PageHeader";
 import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/StateViews";
-import { formatDateTime, isTerminalBookingStatus } from "../../shared/utils/format";
+import { formatDateTime } from "../../shared/utils/format";
 
 export function CompletionPage() {
   const { user } = useAuth();
@@ -29,7 +29,7 @@ export function CompletionPage() {
     queryFn: () => getBookings({ sort: "startsAtDesc" }, user ?? undefined),
   });
   const eligibleBookings = useMemo(
-    () => (bookingsQuery.data ?? []).filter((booking) => !isTerminalBookingStatus(booking.status)),
+    () => (bookingsQuery.data ?? []).filter((booking) => booking.status === "confirmed" || booking.status === "completed"),
     [bookingsQuery.data],
   );
 
@@ -109,19 +109,19 @@ export function CompletionPage() {
     <>
       <PageHeader
         eyebrow="Completion"
-        title="상담 완료 및 처방 노트 전달"
-        description="전문가가 내부 메모와 고객용 뷰티 처방 노트, 추천사항을 남기고 앱으로 전달할 리포트를 선택합니다. 완료 후 리뷰 요청 상태를 추적합니다."
+        title="상담 완료 및 AI 요약 전달"
+        description="화상 상담 완료 후 생성된 AI 요약본을 확인하고, 전문가 추가 코멘트만 보강해 고객 앱으로 전달합니다."
       />
 
       {eligibleBookings.length === 0 ? (
-        <EmptyState title="완료 처리할 수 있는 예약이 없습니다" description="취소, 노쇼, 환불 요청 예약은 완료/리포트/리뷰 흐름에서 제외됩니다." />
+        <EmptyState title="완료 처리할 수 있는 예약이 없습니다" description="AI 요약 전달은 확정된 화상 상담에서 진행할 수 있습니다." />
       ) : (
         <div className="completion-layout">
           <form className="panel" onSubmit={handleSubmit}>
             <div className="panel-header">
               <div>
-              <h2>뷰티 처방 노트 작성</h2>
-              <p>고객에게 앱으로 전달될 내용과 내부 운영 메모를 분리해서 남깁니다.</p>
+              <h2>AI 상담 요약 확인</h2>
+              <p>상담사는 요약을 직접 작성하지 않고, 필요한 전문가 코멘트만 덧붙입니다.</p>
               </div>
               {detail ? <BookingStatusBadge status={detail.booking.status} /> : null}
             </div>
@@ -135,27 +135,27 @@ export function CompletionPage() {
                   ))}
                 </SelectInput>
               </Field>
-              <Field label="전화상담 transcript" hint="전화 연동 전 v1에서는 상담사가 통화 내용 또는 메모를 붙여넣습니다.">
-                <TextArea value={transcript} onChange={(event) => setTranscript(event.target.value)} placeholder="고객 발화와 전문가 안내를 시간순으로 입력하면 AI 요약 초안을 생성합니다." />
+              <Field label="화상상담 transcript" hint="화상통화 연동 전 v1에서는 테스트용 transcript를 붙여넣어 AI 요약을 생성합니다.">
+                <TextArea value={transcript} onChange={(event) => setTranscript(event.target.value)} placeholder="고객 발화와 전문가 안내를 시간순으로 입력하면 AI 요약본을 생성합니다." />
               </Field>
               <Button
                 type="button"
                 variant="secondary"
                 icon={<Sparkles size={16} />}
-                disabled={aiSummaryMutation.isPending || (!transcript.trim() && !internalMemo.trim()) || !selectedBookingId}
+                disabled={aiSummaryMutation.isPending || !transcript.trim() || !selectedBookingId}
                 onClick={() => aiSummaryMutation.mutate()}
               >
-                {aiSummaryMutation.isPending ? "AI 요약 생성 중" : "OpenAI 요약 초안 생성"}
+                {aiSummaryMutation.isPending ? "AI 요약 생성 중" : "AI 요약 생성"}
               </Button>
               {aiSummaryMutation.isError ? <div className="form-error">{aiSummaryMutation.error.message}</div> : null}
-              <Field label="내부 메모" hint="운영자와 전문가만 볼 내용입니다.">
-                <TextArea value={internalMemo} onChange={(event) => setInternalMemo(event.target.value)} placeholder="다음 상담에서 확인할 점, 민감한 운영 메모 등을 적어주세요." />
+              <Field label="전문가 추가 코멘트" hint="AI 요약본 맨 아래에 전문가 코멘트로 추가됩니다.">
+                <TextArea value={internalMemo} onChange={(event) => setInternalMemo(event.target.value)} placeholder="AI 요약 이후 고객에게 추가로 전할 보완 코멘트를 적어주세요." />
               </Field>
-              <Field label="고객용 처방 노트">
-                <TextArea value={customerSummary} onChange={(event) => setCustomerSummary(event.target.value)} placeholder="고객에게 전달될 톤/메이크업/스타일 진단 요약을 작성하세요." required />
+              <Field label="AI 요약본">
+                <TextArea readOnly value={customerSummary} onChange={(event) => setCustomerSummary(event.target.value)} placeholder="AI 요약 생성 후 자동으로 채워집니다." required />
               </Field>
-              <Field label="추천사항">
-                <TextArea value={recommendations} onChange={(event) => setRecommendations(event.target.value)} placeholder="바로 적용할 메이크업 루틴, 제품 톤, 다음 예약 권장 시점을 작성하세요." required />
+              <Field label="AI 추천사항">
+                <TextArea readOnly value={recommendations} onChange={(event) => setRecommendations(event.target.value)} placeholder="AI 요약 생성 후 자동으로 채워집니다." required />
               </Field>
 
               <section className="settings-section">

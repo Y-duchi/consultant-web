@@ -24,7 +24,7 @@ import { PageHeader } from "../../shared/ui/PageHeader";
 import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/StateViews";
 import { Tabs } from "../../shared/ui/Tabs";
 import { bookingStatusOptions } from "../../shared/utils/options";
-import { addDays, formatCurrency, formatDate, formatDateTime, formatTime, isTerminalBookingStatus, toInputDate } from "../../shared/utils/format";
+import { addDays, formatCurrency, formatDate, formatDateTime, formatTime, toInputDate } from "../../shared/utils/format";
 import type { AvailabilitySlot, Booking, BookingStatus } from "../../types/domain";
 
 type CalendarView = "month" | "week" | "day";
@@ -280,9 +280,9 @@ export function BookingsPage() {
               >
                 전화 준비
               </Button>
-              {!isTerminalBookingStatus(selectedDetail.booking.status) ? (
+              {selectedDetail.booking.status === "confirmed" || selectedDetail.booking.status === "completed" ? (
                 <Button variant="primary" icon={<CheckCircle2 size={16} />} onClick={() => navigate(`/workspace/completion?bookingId=${selectedDetail.booking.id}`)}>
-                  완료/리포트
+                  완료/AI 요약
                 </Button>
               ) : null}
             </>
@@ -403,11 +403,17 @@ export function BookingsPage() {
               </div>
               <div className="panel-body settings-section">
                 <div className="form-grid">
-                  <Button variant="secondary" icon={<Clock3 size={16} />} onClick={() => statusMutation.mutate({ bookingId: selectedDetail.booking.id, nextStatus: "in_progress" })}>
-                    진행중
+                  <Button variant="secondary" icon={<Clock3 size={16} />} onClick={() => statusMutation.mutate({ bookingId: selectedDetail.booking.id, nextStatus: "requested" })}>
+                    신청
                   </Button>
-                  <Button variant="secondary" icon={<CheckCircle2 size={16} />} onClick={() => statusMutation.mutate({ bookingId: selectedDetail.booking.id, nextStatus: "completed" })} disabled={isTerminalBookingStatus(selectedDetail.booking.status)}>
-                    완료 처리
+                  <Button variant="secondary" icon={<Clock3 size={16} />} onClick={() => statusMutation.mutate({ bookingId: selectedDetail.booking.id, nextStatus: "contacting" })}>
+                    확인중
+                  </Button>
+                  <Button variant="secondary" icon={<CheckCircle2 size={16} />} onClick={() => statusMutation.mutate({ bookingId: selectedDetail.booking.id, nextStatus: "confirmed" })}>
+                    확정
+                  </Button>
+                  <Button variant="secondary" icon={<CheckCircle2 size={16} />} onClick={() => navigate(`/workspace/completion?bookingId=${selectedDetail.booking.id}`)} disabled={selectedDetail.booking.status !== "confirmed" && selectedDetail.booking.status !== "completed"}>
+                    완료/AI 요약
                   </Button>
                   <Button variant="secondary" icon={<XCircle size={16} />} onClick={() => statusMutation.mutate({ bookingId: selectedDetail.booking.id, nextStatus: "no_show" })}>
                     노쇼
