@@ -1,6 +1,14 @@
 {
   "rewrites": [
     {
+      "source": "/api/admin/:path*",
+      "destination": "https://d3t1pbvtir1lj.cloudfront.net/api/admin/:path*"
+    },
+    {
+      "source": "/api/partner-applications/:path*",
+      "destination": "https://d3t1pbvtir1lj.cloudfront.net/api/partner-applications/:path*"
+    },
+    {
       "source": "/api/consulting/partner/:path*",
       "destination": "https://d3t1pbvtir1lj.cloudfront.net/api/consulting/partner/:path*"
     },
