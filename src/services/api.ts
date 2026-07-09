@@ -80,6 +80,19 @@ export interface SharedReportDetail {
 }
 
 function getPartnerApiBaseUrl() {
+  const explicit = import.meta.env.VITE_PARTNER_API_BASE_URL?.trim();
+  if (explicit) {
+    return explicit.replace(/\/+$/, "");
+  }
+
+  if (
+    typeof window !== "undefined" &&
+    window.location.hostname !== "localhost" &&
+    window.location.hostname !== "127.0.0.1"
+  ) {
+    return "/api/consulting/partner";
+  }
+
   const raw = import.meta.env.VITE_API_BASE_URL?.trim() || "http://127.0.0.1:8000";
   const trimmed = raw.replace(/\/+$/, "");
   return trimmed.endsWith("/api") ? `${trimmed}/consulting/partner` : `${trimmed}/api/consulting/partner`;
