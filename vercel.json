@@ -1,6 +1,10 @@
 {
   "rewrites": [
     {
+      "source": "/api/consulting/partner/:path*",
+      "destination": "https://d3t1pbvtir1lj.cloudfront.net/api/consulting/partner/:path*"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

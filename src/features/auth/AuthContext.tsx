@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, useState } from "react";
-import { clearPartnerSession, completePartnerPasswordChange, mockLogin, type LoginRequest } from "../../services/api";
+import { clearPartnerSession, completePartnerPasswordChange, getPartnerSessionToken, mockLogin, type LoginRequest } from "../../services/api";
 import type { AuthUser } from "../../types/domain";
 
 interface AuthContextValue {
@@ -15,8 +15,33 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(() => {
+    if (window.location.pathname === "/login") {
+      clearPartnerSession();
+      window.localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as AuthUser) : null;
+    if (!raw) {
+      return null;
+    }
+
+    try {
+      const storedUser = JSON.parse(raw) as AuthUser;
+      const isPartnerUser = storedUser.role !== "admin" && storedUser.role !== "operator";
+
+      if (isPartnerUser && !getPartnerSessionToken()) {
+        clearPartnerSession();
+        window.localStorage.removeItem(STORAGE_KEY);
+        return null;
+      }
+
+      return storedUser;
+    } catch {
+      clearPartnerSession();
+      window.localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
   });
 
   const value = useMemo<AuthContextValue>(
@@ -24,6 +49,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user,
       isAuthenticated: Boolean(user),
       login: async (request) => {
+        clearPartnerSession();
+        window.localStorage.removeItem(STORAGE_KEY);
         const nextUser = await mockLogin(request);
         setUser(nextUser);
         window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextUser));
