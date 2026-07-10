@@ -20,15 +20,29 @@ def ok(data: Any) -> dict[str, Any]:
 
 async def get_compat_principal(authorization: str | None = Header(default=None, alias="Authorization")) -> PartnerPrincipal:
   token = (authorization or "").replace("Bearer", "", 1).strip()
-  if not token.startswith("partner:"):
+  if not token:
     raise HTTPException(status_code=401, detail="Partner session token is required.")
   return await real_workspace.principal_from_token(token)
+
+
+async def get_password_change_principal(authorization: str | None = Header(default=None, alias="Authorization")) -> PartnerPrincipal:
+  token = (authorization or "").replace("Bearer", "", 1).strip()
+  if not token:
+    raise HTTPException(status_code=401, detail="Partner session token is required.")
+  return await real_workspace.principal_from_token(token, allow_password_change_required=True)
 
 
 @router.post("/login")
 async def login_partner(payload: dict):
   email = str(payload.get("email") or "").strip()
-  return ok(await real_workspace.login_partner(email))
+  password = str(payload.get("password") or "")
+  return ok(await real_workspace.login_partner(email, password))
+
+
+@router.post("/me/password")
+async def change_partner_password(payload: dict, principal: PartnerPrincipal = Depends(get_password_change_principal)):
+  new_password = str(payload.get("newPassword") or payload.get("new_password") or "")
+  return ok({"account": await real_workspace.change_partner_password(principal.account_id, new_password)})
 
 
 @router.get("/dashboard")

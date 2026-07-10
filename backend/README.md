@@ -59,7 +59,7 @@ Business registration certificates and credentials should stay private and be ac
 
 ## Partner application workflow
 
-The backend exposes FastAPI endpoints for partner onboarding and partner workspace operations. The web compatibility routes under `/api/consulting/partner/*` read the live consulting tables directly. If the optional `partner_applications` table has not been migrated, admin application lists return an empty state instead of sample rows.
+The backend exposes FastAPI endpoints for partner onboarding and partner workspace operations. Applications are persisted in `consulting_partner_applications`; approval creates the `consulting_experts` profile, duration prices, and `consulting_partner_accounts` credential in one transaction. The web compatibility routes under `/api/consulting/partner/*` read those live consulting tables directly.
 
 ```text
 POST /api/partner-applications
@@ -94,7 +94,7 @@ GET  /api/partner/events/snapshot
 GET  /api/consulting/bookings/{booking_id}/summary
 ```
 
-The admin API requires `X-Admin-Id` plus `X-Aura-Role: admin|operator`. Partner application list/detail/decision/document-access routes are admin-only; applicants only get the restricted status response and do not receive private document storage keys, presigned URLs, review logs, or generated account details. The web compatibility partner API validates `Bearer partner:{account_id}` against `consulting_partner_accounts`. Bookings, customers, chats, summaries, and reports are filtered server-side from that account's `expert_id` scope.
+The admin API requires `X-Admin-Id` plus `X-Aura-Role: admin|operator`. Partner application list/detail/decision/document-access routes are admin-only; applicants only get the restricted status response and do not receive private document storage keys, review logs, or generated account details. The web compatibility partner API verifies an opaque bearer session stored as a SHA-256 hash in `consulting_partner_sessions`. Bookings, customers, chats, summaries, and reports are filtered server-side from that account's `expert_id` scope.
 
 Run the contract smoke check without installing FastAPI locally:
 

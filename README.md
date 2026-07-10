@@ -2,7 +2,7 @@
 
 뷰티 종합 플랫폼 앱의 전문가, 업체, 프리랜서 파트너가 고객 상담 예약과 AI 리포트를 관리하는 React 기반 웹 매니저입니다.
 
-현재 프론트는 `src/services/api.ts`에서 FastAPI 백엔드를 직접 호출합니다. 관리자/파트너 웹 호환 API는 실제 RDS의 `consulting_*`, `analysis_reports`, `makeup_feedback_reports`, `users`, `media_assets` 테이블을 읽어 예약, 채팅, 고객, 전문가, 리포트, 상담 요약 데이터를 구성합니다. 입점 신청 전용 테이블이 없는 환경에서는 신청 목록을 빈 상태로 보여주며 샘플 신청 데이터를 섞지 않습니다.
+현재 프론트는 `src/services/api.ts`에서 FastAPI 백엔드를 직접 호출합니다. 관리자/파트너 웹 호환 API는 실제 RDS의 `consulting_*`, `analysis_reports`, `makeup_feedback_reports`, `users`, `media_assets` 테이블을 읽어 예약, 채팅, 고객, 전문가, 리포트, 상담 요약 데이터를 구성합니다. 입점 신청과 승인도 `consulting_partner_applications`, `consulting_experts`, `consulting_partner_accounts`를 하나의 RDS 흐름으로 사용합니다.
 
 관리자와 업체/전문가 화면은 라우트와 레이아웃을 분리합니다. 운영자는 `/admin/*`, 승인된 파트너는 `/workspace/*`, 승인 전 신청자는 `/application-status`만 사용합니다.
 임시 비밀번호로 승인된 파트너는 `/workspace/password`에서 새 비밀번호를 설정하기 전까지 운영 화면 접근이 제한됩니다.

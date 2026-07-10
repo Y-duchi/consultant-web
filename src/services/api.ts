@@ -583,20 +583,20 @@ export async function loginUser(request: LoginRequest): Promise<AuthUser> {
 }
 
 export async function completePartnerPasswordChange(accountId: string, nextPassword: string): Promise<void> {
-  await delay(240);
   const normalizedPassword = nextPassword.trim();
   if (normalizedPassword.length < 8) {
     throw new Error("새 비밀번호는 8자 이상이어야 합니다.");
   }
-
-  const account = partnerAccounts.find((item) => item.id === accountId);
-  if (!account) {
-    throw new Error("파트너 계정을 찾을 수 없습니다.");
+  const result = await requestPartnerJson<{ account: { accountId: string; status: string; passwordChangeRequired: boolean } }>(
+    "/me/password",
+    {
+      method: "POST",
+      body: JSON.stringify({ newPassword: normalizedPassword }),
+    },
+  );
+  if (result.account.accountId !== accountId || result.account.passwordChangeRequired) {
+    throw new Error("파트너 계정 비밀번호 변경 결과를 확인하지 못했습니다.");
   }
-
-  account.passwordChangeRequired = false;
-  account.status = "active";
-  account.temporaryPassword = "";
 }
 
 export async function submitPartnerApplication(input: PartnerApplicationInput): Promise<PartnerApplication> {
