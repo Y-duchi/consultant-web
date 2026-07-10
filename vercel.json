@@ -1,6 +1,10 @@
 {
   "rewrites": [
     {
+      "source": "/api/partner-applications",
+      "destination": "https://d3t1pbvtir1lj.cloudfront.net/staging/api/partner-applications"
+    },
+    {
       "source": "/api/admin/:path*",
       "destination": "https://d3t1pbvtir1lj.cloudfront.net/staging/api/admin/:path*"
     },
