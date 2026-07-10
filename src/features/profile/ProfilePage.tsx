@@ -229,7 +229,7 @@ export function ProfilePage() {
                   <div className="panel-header">
                     <div>
                       <h3>자격증/수료증 이미지</h3>
-                      <p>현재는 mock 업로드이며 실제 파일은 전송하지 않습니다.</p>
+                      <p>현재는 파일 업로드 API 연결 전이라 실제 파일은 전송하지 않습니다.</p>
                     </div>
                     <ImagePlus size={18} />
                   </div>

@@ -101,7 +101,7 @@ export function LoginPage() {
           </form>
         )}
         <div className="login-footer">
-          파트너 화면은 백엔드 예약·고객·채팅·공유 리포트 API와 연결됩니다. 관리자와 입점 심사는 데모 운영 화면으로 유지됩니다.
+          파트너와 관리자 화면은 FastAPI 백엔드의 실제 운영 데이터를 기준으로 표시됩니다.
         </div>
       </section>
     </main>

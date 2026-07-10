@@ -22,7 +22,7 @@ export function Drawer({ open, title, description, children, footer, onClose }: 
             <h2 id="drawer-title">{title}</h2>
             {description ? <p>{description}</p> : null}
           </div>
-          <Button variant="ghost" icon={<X size={17} />} onClick={onClose} aria-label="닫기">
+          <Button className="dialog-close-button" variant="ghost" icon={<X size={17} />} onClick={onClose} aria-label="닫기">
             닫기
           </Button>
         </header>

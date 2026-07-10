@@ -1,20 +1,18 @@
-import { Fragment, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarRange, CheckCircle2, Clock3, MessageSquareText, Phone, Plus, Save, Search, XCircle } from "lucide-react";
+import { CalendarRange, CheckCircle2, Clock3, CreditCard, MessageSquareText, Phone, Save, Search, Video, XCircle } from "lucide-react";
 import {
-  addBookingNote,
-  cancelBooking,
   createPhoneAction,
   getAvailability,
   getBookingDetail,
   getBookings,
   getCustomerName,
   getExperts,
+  saveBookingChanges,
   updateAvailability,
-  updateBooking,
-  updateBookingStatus,
 } from "../../services/api";
+import type { BookingSaveChangesInput } from "../../services/api";
 import { useAuth } from "../auth/AuthContext";
 import { BookingStatusBadge, PaymentStatusBadge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
@@ -26,8 +24,25 @@ import { Tabs } from "../../shared/ui/Tabs";
 import { bookingStatusOptions } from "../../shared/utils/options";
 import { addDays, formatCurrency, formatDate, formatDateTime, formatTime, toInputDate } from "../../shared/utils/format";
 import type { AvailabilitySlot, Booking, BookingStatus } from "../../types/domain";
+import { AppReportCard } from "../reports/AppReportCard";
 
 type CalendarView = "month" | "week" | "day";
+type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
+type BookingFlowActionKey = "contacting" | "payment" | "confirm" | "start" | "summary";
+type BookingFlowAction = {
+  description: string;
+  disabled?: boolean;
+  key: BookingFlowActionKey;
+  label: string;
+  variant: ButtonVariant;
+};
+type BookingEditDraft = {
+  type: string;
+  internalMemo: string;
+  date: string;
+  startsAt: string;
+  durationMinutes: 30 | 60;
+};
 
 const viewOptions: Array<{ value: CalendarView; label: string }> = [
   { value: "month", label: "월" },
@@ -45,6 +60,7 @@ const slotTimes = Array.from({ length: 21 }, (_, index) => {
 export function BookingsPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [view, setView] = useState<CalendarView>("week");
   const [anchorDate, setAnchorDate] = useState(() => new Date());
@@ -52,7 +68,10 @@ export function BookingsPage() {
   const [status, setStatus] = useState<BookingStatus | "all">("all");
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
-  const [editDraft, setEditDraft] = useState({
+  const [pendingStatus, setPendingStatus] = useState<BookingStatus | null>(null);
+  const [pendingPaymentPaid, setPendingPaymentPaid] = useState(false);
+  const [saveFeedback, setSaveFeedback] = useState("");
+  const [editDraft, setEditDraft] = useState<BookingEditDraft>({
     type: "",
     internalMemo: "",
     date: "",
@@ -66,6 +85,7 @@ export function BookingsPage() {
     kind: "available" as AvailabilitySlot["kind"],
     note: "",
   });
+  const requestedBookingId = searchParams.get("bookingId")?.trim() ?? "";
 
   const bookingsQuery = useQuery({
     queryKey: ["bookings", query, status, user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
@@ -90,27 +110,21 @@ export function BookingsPage() {
   const invalidateBookings = () => {
     queryClient.invalidateQueries({ queryKey: ["bookings"] });
     queryClient.invalidateQueries({ queryKey: ["booking-detail"] });
+    queryClient.invalidateQueries({ queryKey: ["customer-detail"] });
+    queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
     queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
   };
 
-  const statusMutation = useMutation({
-    mutationFn: ({ bookingId, nextStatus }: { bookingId: string; nextStatus: BookingStatus }) => updateBookingStatus(bookingId, nextStatus, user ?? undefined),
-    onSuccess: invalidateBookings,
-  });
-  const noteMutation = useMutation({
-    mutationFn: ({ bookingId, note }: { bookingId: string; note: string }) => addBookingNote(bookingId, note, user ?? undefined),
-    onSuccess: () => {
+  const saveChangesMutation = useMutation({
+    mutationFn: ({ bookingId, changes }: { bookingId: string; changes: BookingSaveChangesInput }) => saveBookingChanges(bookingId, changes, user ?? undefined),
+    onSuccess: (booking) => {
+      setEditDraft(makeEditDraft(booking));
+      setPendingStatus(null);
+      setPendingPaymentPaid(false);
       setNoteDraft("");
+      setSaveFeedback("변경사항이 저장되었습니다.");
       invalidateBookings();
     },
-  });
-  const updateMutation = useMutation({
-    mutationFn: ({ bookingId, patch }: { bookingId: string; patch: Parameters<typeof updateBooking>[1] }) => updateBooking(bookingId, patch, user ?? undefined),
-    onSuccess: invalidateBookings,
-  });
-  const cancelMutation = useMutation({
-    mutationFn: ({ bookingId, reason }: { bookingId: string; reason: string }) => cancelBooking(bookingId, reason, user ?? undefined),
-    onSuccess: invalidateBookings,
   });
   const availabilityMutation = useMutation({
     mutationFn: (slot: AvailabilitySlot) => updateAvailability(slot),
@@ -126,17 +140,99 @@ export function BookingsPage() {
   }, [anchorDate, view, visibleDates]);
 
   const selectedDetail = detailQuery.data;
+  const previewBooking = useMemo(() => {
+    if (!selectedDetail) return null;
+    return makePreviewBooking(selectedDetail.booking, editDraft, pendingStatus, pendingPaymentPaid);
+  }, [editDraft, pendingPaymentPaid, pendingStatus, selectedDetail]);
+  const hasPendingChanges = Boolean(
+    selectedDetail &&
+      (
+        hasEditDraftChanges(editDraft, selectedDetail.booking) ||
+        pendingStatus ||
+        pendingPaymentPaid ||
+        noteDraft.trim()
+      ),
+  );
 
   const openBooking = (booking: Booking) => {
     setSelectedBookingId(booking.id);
-    setEditDraft({
-      type: booking.type,
-      internalMemo: booking.internalMemo,
-      date: toInputDate(booking.startsAt),
-      startsAt: getLocalTimeKey(booking.startsAt),
-      durationMinutes: booking.durationMinutes,
-    });
+    setEditDraft(makeEditDraft(booking));
+    setPendingStatus(null);
+    setPendingPaymentPaid(false);
+    setNoteDraft("");
+    setSaveFeedback("");
   };
+
+  const closeBooking = () => {
+    setSelectedBookingId(null);
+    setPendingStatus(null);
+    setPendingPaymentPaid(false);
+    setNoteDraft("");
+    setSaveFeedback("");
+    if (requestedBookingId) {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete("bookingId");
+      setSearchParams(nextParams, { replace: true });
+    }
+  };
+
+  const selectStatus = (nextStatus: BookingStatus) => {
+    setPendingStatus((current) => (current === nextStatus ? null : nextStatus));
+    setSaveFeedback("");
+  };
+
+  const handleFlowAction = (actionKey: BookingFlowActionKey) => {
+    setSaveFeedback("");
+    if (!selectedDetail) return;
+    if (actionKey === "contacting") {
+      selectStatus("contacting");
+      return;
+    }
+    if (actionKey === "payment") {
+      setPendingPaymentPaid(true);
+      return;
+    }
+    if (actionKey === "confirm") {
+      selectStatus("confirmed");
+      return;
+    }
+    if (actionKey === "start") {
+      selectStatus("in_progress");
+      return;
+    }
+    if (actionKey === "summary" && canOpenCompletion(selectedDetail.booking.status)) {
+      navigate(`/workspace/completion?bookingId=${selectedDetail.booking.id}`);
+    }
+  };
+
+  const handleSaveChanges = () => {
+    if (!selectedDetail) return;
+    const changes: BookingSaveChangesInput = {};
+    if (hasEditDraftChanges(editDraft, selectedDetail.booking)) {
+      changes.patch = buildEditPatch(editDraft);
+    }
+    if (pendingStatus) {
+      changes.status = pendingStatus;
+    }
+    if (pendingPaymentPaid) {
+      changes.markPaymentPaid = true;
+    }
+    if (noteDraft.trim()) {
+      changes.note = noteDraft.trim();
+    }
+    if (pendingStatus === "cancelled") {
+      changes.cancelReason = "운영자 수동 취소";
+    }
+    saveChangesMutation.mutate({ bookingId: selectedDetail.booking.id, changes });
+  };
+
+  useEffect(() => {
+    if (!requestedBookingId || selectedBookingId || bookings.length === 0) return;
+    const requestedBooking = bookings.find((booking) => booking.id === requestedBookingId);
+    if (!requestedBooking) return;
+    setAnchorDate(new Date(requestedBooking.startsAt));
+    openBooking(requestedBooking);
+  }, [bookings, requestedBookingId, selectedBookingId]);
 
   if (bookingsQuery.isLoading) return <LoadingState label="예약 데이터를 불러오는 중입니다" />;
   if (bookingsQuery.isError) return <ErrorState message={bookingsQuery.error.message} onRetry={() => bookingsQuery.refetch()} />;
@@ -146,7 +242,7 @@ export function BookingsPage() {
       <PageHeader
         eyebrow="Bookings"
         title="앱 예약 관리"
-        description="고객이 앱에서 선택한 전문가, 날짜/30분 슬롯, 전달 리포트, 사전 질문, 결제 상태를 한 흐름으로 관리합니다."
+        description="고객 예약 신청 이후 채팅방에서 선결제 또는 예약금 입금을 확인하고, 전문가가 확정한 상담만 화상통화와 AI 요약 리포트로 이어집니다."
         actions={
           <Button variant="secondary" icon={<CalendarRange size={17} />} onClick={() => setAnchorDate(new Date())}>
             오늘로 이동
@@ -261,15 +357,15 @@ export function BookingsPage() {
       <Drawer
         open={Boolean(selectedBookingId)}
         title={selectedDetail ? `${selectedDetail.customer.name} 예약 상세` : "예약 상세"}
-        description={selectedDetail ? `${formatDateTime(selectedDetail.booking.startsAt)} · ${selectedDetail.expert.name}` : undefined}
-        onClose={() => setSelectedBookingId(null)}
+        description={selectedDetail && previewBooking ? `${formatDateTime(previewBooking.startsAt)} · ${selectedDetail.expert.name}` : undefined}
+        onClose={closeBooking}
         footer={
           selectedDetail ? (
             <>
               <Button
                 variant="secondary"
                 icon={<MessageSquareText size={16} />}
-                onClick={() => navigate("/workspace/chat")}
+                onClick={() => navigate(`/workspace/chat?bookingId=${selectedDetail.booking.id}`)}
               >
                 채팅
               </Button>
@@ -280,9 +376,9 @@ export function BookingsPage() {
               >
                 전화 준비
               </Button>
-              {selectedDetail.booking.status === "confirmed" || selectedDetail.booking.status === "completed" ? (
+              {canOpenCompletion(selectedDetail.booking.status) ? (
                 <Button variant="primary" icon={<CheckCircle2 size={16} />} onClick={() => navigate(`/workspace/completion?bookingId=${selectedDetail.booking.id}`)}>
-                  완료/AI 요약
+                  통화 종료/AI 요약
                 </Button>
               ) : null}
             </>
@@ -290,14 +386,16 @@ export function BookingsPage() {
         }
       >
         {detailQuery.isLoading ? <LoadingState label="예약 상세를 불러오는 중입니다" /> : null}
-        {selectedDetail ? (
+        {selectedDetail && previewBooking ? (
           <div className="settings-section">
+            <BookingFlow booking={previewBooking} />
             <dl className="detail-list">
               <div className="detail-row">
                 <dt>상태</dt>
                 <dd className="tag-list">
-                  <BookingStatusBadge status={selectedDetail.booking.status} />
-                  <PaymentStatusBadge status={selectedDetail.booking.paymentStatus} />
+                  <BookingStatusBadge status={previewBooking.status} />
+                  <PaymentStatusBadge status={previewBooking.paymentStatus} />
+                  {hasPendingChanges ? <span className="tag warning">저장 전</span> : null}
                 </dd>
               </div>
               <div className="detail-row">
@@ -307,10 +405,10 @@ export function BookingsPage() {
               <div className="detail-row">
                 <dt>상담</dt>
                 <dd>
-                  {selectedDetail.booking.type} · {selectedDetail.booking.durationMinutes}분 ·
-                  {selectedDetail.booking.channel === "video" ? " 1:1 화상" : selectedDetail.booking.channel === "chat" ? " 채팅" : " 방문"} ·
-                  {formatCurrency(selectedDetail.booking.paidAmount)}
-                  {selectedDetail.booking.discountAmount > 0 ? ` (${formatCurrency(selectedDetail.booking.discountAmount)} 할인)` : ""}
+                  {previewBooking.type} · {previewBooking.durationMinutes}분 ·
+                  {previewBooking.channel === "video" ? " 1:1 화상" : previewBooking.channel === "chat" ? " 채팅" : " 방문"} ·
+                  {formatCurrency(previewBooking.paidAmount)}
+                  {previewBooking.discountAmount > 0 ? ` (${formatCurrency(previewBooking.discountAmount)} 할인)` : ""}
                 </dd>
               </div>
               <div className="detail-row">
@@ -325,7 +423,7 @@ export function BookingsPage() {
               </div>
               <div className="detail-row">
                 <dt>내부 메모</dt>
-                <dd>{selectedDetail.booking.internalMemo || "등록된 메모 없음"}</dd>
+                <dd>{previewBooking.internalMemo || "등록된 메모 없음"}</dd>
               </div>
             </dl>
 
@@ -338,11 +436,7 @@ export function BookingsPage() {
                   <EmptyState title="선택된 리포트 없음" description="고객이 앱에서 룩톡/AI 분석/퍼스널컬러 리포트를 선택하면 여기에 표시됩니다." />
                 ) : (
                   selectedDetail.sharedReports.map((report) => (
-                    <div className="report-item" key={report.id}>
-                      <strong>{report.title}</strong>
-                      <p>{report.summary}</p>
-                      <span className="tag">{report.source === "customer_app" ? "고객 앱 선택" : "전문가 작성"}</span>
-                    </div>
+                    <AppReportCard key={report.id} report={report} />
                   ))
                 )}
               </div>
@@ -354,79 +448,150 @@ export function BookingsPage() {
               </div>
               <div className="panel-body settings-section">
                 <Field label="상담 유형">
-                  <TextInput value={editDraft.type} onChange={(event) => setEditDraft((prev) => ({ ...prev, type: event.target.value }))} />
+                  <TextInput
+                    value={editDraft.type}
+                    onChange={(event) => {
+                      setEditDraft((prev) => ({ ...prev, type: event.target.value }));
+                      setSaveFeedback("");
+                    }}
+                  />
                 </Field>
                 <div className="form-grid">
                   <Field label="예약 날짜">
-                    <TextInput type="date" value={editDraft.date} onChange={(event) => setEditDraft((prev) => ({ ...prev, date: event.target.value }))} />
+                    <TextInput
+                      type="date"
+                      value={editDraft.date}
+                      onChange={(event) => {
+                        setEditDraft((prev) => ({ ...prev, date: event.target.value }));
+                        setSaveFeedback("");
+                      }}
+                    />
                   </Field>
                   <Field label="시작 시간">
-                    <TextInput type="time" value={editDraft.startsAt} onChange={(event) => setEditDraft((prev) => ({ ...prev, startsAt: event.target.value }))} />
+                    <TextInput
+                      type="time"
+                      value={editDraft.startsAt}
+                      onChange={(event) => {
+                        setEditDraft((prev) => ({ ...prev, startsAt: event.target.value }));
+                        setSaveFeedback("");
+                      }}
+                    />
                   </Field>
                   <Field label="상담 길이">
-                    <SelectInput value={editDraft.durationMinutes} onChange={(event) => setEditDraft((prev) => ({ ...prev, durationMinutes: Number(event.target.value) as 30 | 60 }))}>
+                    <SelectInput
+                      value={editDraft.durationMinutes}
+                      onChange={(event) => {
+                        setEditDraft((prev) => ({ ...prev, durationMinutes: Number(event.target.value) as 30 | 60 }));
+                        setSaveFeedback("");
+                      }}
+                    >
                       <option value={30}>30분</option>
                       <option value={60}>1시간</option>
                     </SelectInput>
                   </Field>
                 </div>
                 <Field label="내부 메모">
-                  <TextArea value={editDraft.internalMemo} onChange={(event) => setEditDraft((prev) => ({ ...prev, internalMemo: event.target.value }))} />
+                  <TextArea
+                    value={editDraft.internalMemo}
+                    onChange={(event) => {
+                      setEditDraft((prev) => ({ ...prev, internalMemo: event.target.value }));
+                      setSaveFeedback("");
+                    }}
+                  />
                 </Field>
-                <Button
-                  variant="secondary"
-                  icon={<Save size={16} />}
-                  onClick={() => {
-                    const startsAt = toIsoFromLocalInput(editDraft.date, editDraft.startsAt);
-                    const endsAtDate = new Date(startsAt);
-                    endsAtDate.setMinutes(endsAtDate.getMinutes() + editDraft.durationMinutes);
-                    updateMutation.mutate({
-                      bookingId: selectedDetail.booking.id,
-                      patch: {
-                        type: editDraft.type,
-                        internalMemo: editDraft.internalMemo,
-                        durationMinutes: editDraft.durationMinutes,
-                        startsAt,
-                        endsAt: endsAtDate.toISOString(),
-                      },
-                    });
-                  }}
-                >
-                  수정 저장
-                </Button>
               </div>
             </section>
 
             <section className="panel">
               <div className="panel-header">
-                <h3>상태/메모 액션</h3>
+                <div>
+                  <h3>상태/메모 변경</h3>
+                  <p>선택한 변경사항은 저장 버튼을 누를 때 한 번에 반영됩니다.</p>
+                </div>
               </div>
               <div className="panel-body settings-section">
-                <div className="form-grid">
-                  <Button variant="secondary" icon={<Clock3 size={16} />} onClick={() => statusMutation.mutate({ bookingId: selectedDetail.booking.id, nextStatus: "requested" })}>
-                    신청
-                  </Button>
-                  <Button variant="secondary" icon={<Clock3 size={16} />} onClick={() => statusMutation.mutate({ bookingId: selectedDetail.booking.id, nextStatus: "contacting" })}>
-                    확인중
-                  </Button>
-                  <Button variant="secondary" icon={<CheckCircle2 size={16} />} onClick={() => statusMutation.mutate({ bookingId: selectedDetail.booking.id, nextStatus: "confirmed" })}>
-                    확정
-                  </Button>
-                  <Button variant="secondary" icon={<CheckCircle2 size={16} />} onClick={() => navigate(`/workspace/completion?bookingId=${selectedDetail.booking.id}`)} disabled={selectedDetail.booking.status !== "confirmed" && selectedDetail.booking.status !== "completed"}>
-                    완료/AI 요약
-                  </Button>
-                  <Button variant="secondary" icon={<XCircle size={16} />} onClick={() => statusMutation.mutate({ bookingId: selectedDetail.booking.id, nextStatus: "no_show" })}>
-                    노쇼
-                  </Button>
-                  <Button variant="danger" icon={<XCircle size={16} />} onClick={() => cancelMutation.mutate({ bookingId: selectedDetail.booking.id, reason: "운영자 수동 취소" })}>
-                    취소
-                  </Button>
+                <div className="workflow-action-panel">
+                  <div className="workflow-current">
+                    <span>현재 단계</span>
+                    <strong>{getFlowStageLabel(previewBooking)}</strong>
+                    <p>{getFlowStageDescription(previewBooking)}</p>
+                  </div>
+
+                  {(() => {
+                    const action = getPrimaryFlowAction(previewBooking, selectedDetail.booking);
+                    if (!action) {
+                      return (
+                        <div className="workflow-next-card is-muted">
+                          <span>다음 처리</span>
+                          <strong>{previewBooking.status === "completed" ? "상담 완료" : "추가 처리 없음"}</strong>
+                          <p>{previewBooking.status === "completed" ? "화상 상담과 AI 요약이 완료된 예약입니다." : "이미 종료된 예약은 상태 변경 대신 기록 확인만 진행합니다."}</p>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="workflow-next-card">
+                        <div>
+                          <span>다음 처리</span>
+                          <strong>{action.label}</strong>
+                          <p>{action.description}</p>
+                        </div>
+                        <Button
+                          variant={action.variant}
+                          icon={getFlowActionIcon(action.key)}
+                          onClick={() => handleFlowAction(action.key)}
+                          disabled={action.disabled}
+                        >
+                          {action.label}
+                        </Button>
+                      </div>
+                    );
+                  })()}
+
+                  <div className="workflow-status-grid">
+                    <div>
+                      <span>입금 상태</span>
+                      <strong>{previewBooking.paymentStatus === "paid" ? "입금 확인 완료" : "입금 확인 전"}</strong>
+                    </div>
+                    <div>
+                      <span>저장 상태</span>
+                      <strong>{hasPendingChanges ? "저장 전 변경 있음" : "저장됨"}</strong>
+                    </div>
+                  </div>
+
+                  {canUseExceptionActions(selectedDetail.booking.status) ? (
+                    <div className="workflow-exception-row">
+                      <Button variant={previewBooking.status === "no_show" ? "primary" : "secondary"} icon={<XCircle size={16} />} onClick={() => selectStatus("no_show")}>
+                        {previewBooking.status === "no_show" ? "노쇼 선택됨" : "노쇼 처리"}
+                      </Button>
+                      <Button variant={previewBooking.status === "cancelled" ? "danger" : "secondary"} icon={<XCircle size={16} />} onClick={() => selectStatus("cancelled")}>
+                        {previewBooking.status === "cancelled" ? "취소 선택됨" : "예약 취소"}
+                      </Button>
+                    </div>
+                  ) : null}
                 </div>
                 <Field label="메모 추가">
-                  <TextArea value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} placeholder="상담 전 확인사항, 고객 연락 기록, 운영 메모를 추가하세요." />
+                  <TextArea
+                    value={noteDraft}
+                    onChange={(event) => {
+                      setNoteDraft(event.target.value);
+                      setSaveFeedback("");
+                    }}
+                    placeholder="상담 전 확인사항, 고객 연락 기록, 운영 메모를 추가하세요."
+                  />
                 </Field>
-                <Button variant="secondary" icon={<Plus size={16} />} disabled={!noteDraft.trim()} onClick={() => noteMutation.mutate({ bookingId: selectedDetail.booking.id, note: noteDraft })}>
-                  메모 추가
+                <div className={`save-status ${hasPendingChanges ? "is-pending" : ""}`}>
+                  {hasPendingChanges ? "저장 전 변경사항이 있습니다. 변경사항 저장을 누르면 한 번에 업로드됩니다." : "저장된 예약 정보와 동일합니다."}
+                </div>
+                {saveFeedback ? <div className="form-success">{saveFeedback}</div> : null}
+                {saveChangesMutation.isError ? <div className="form-error">{saveChangesMutation.error.message}</div> : null}
+                <Button
+                  variant="primary"
+                  icon={<Save size={16} />}
+                  disabled={!hasPendingChanges || saveChangesMutation.isPending}
+                  onClick={handleSaveChanges}
+                >
+                  {saveChangesMutation.isPending ? "저장 중" : "변경사항 저장"}
                 </Button>
               </div>
             </section>
@@ -502,6 +667,174 @@ function BookingPill({ booking, onClick }: { booking: Booking; onClick: () => vo
       <span>{booking.type} · 리포트 {booking.sharedReportIds.length}개</span>
     </button>
   );
+}
+
+function makeEditDraft(booking: Booking): BookingEditDraft {
+  return {
+    type: booking.type,
+    internalMemo: booking.internalMemo,
+    date: toInputDate(booking.startsAt),
+    startsAt: getLocalTimeKey(booking.startsAt),
+    durationMinutes: booking.durationMinutes,
+  };
+}
+
+function buildEditPatch(draft: BookingEditDraft): NonNullable<BookingSaveChangesInput["patch"]> {
+  const startsAt = toIsoFromLocalInput(draft.date, draft.startsAt);
+  const endsAtDate = new Date(startsAt);
+  endsAtDate.setMinutes(endsAtDate.getMinutes() + draft.durationMinutes);
+  return {
+    type: draft.type,
+    internalMemo: draft.internalMemo,
+    durationMinutes: draft.durationMinutes,
+    startsAt,
+    endsAt: endsAtDate.toISOString(),
+  };
+}
+
+function hasEditDraftChanges(draft: BookingEditDraft, booking: Booking) {
+  return (
+    draft.type !== booking.type ||
+    draft.internalMemo !== booking.internalMemo ||
+    draft.date !== toInputDate(booking.startsAt) ||
+    draft.startsAt !== getLocalTimeKey(booking.startsAt) ||
+    draft.durationMinutes !== booking.durationMinutes
+  );
+}
+
+function makePreviewBooking(booking: Booking, draft: BookingEditDraft, pendingStatus: BookingStatus | null, pendingPaymentPaid: boolean): Booking {
+  const patch = buildEditPatch(draft);
+  const preview: Booking = {
+    ...booking,
+    ...patch,
+  };
+  if (pendingPaymentPaid) {
+    preview.paymentStatus = "paid";
+    if (!pendingStatus && booking.status === "requested") {
+      preview.status = "contacting";
+    }
+  }
+  if (pendingStatus) {
+    preview.status = pendingStatus;
+  }
+  return preview;
+}
+
+function getFlowStageLabel(booking: Booking) {
+  if (booking.status === "completed") return "자동 완료";
+  if (booking.status === "cancelled") return "예약 취소";
+  if (booking.status === "no_show") return "노쇼";
+  if (booking.status === "refund_requested") return "환불 요청";
+  if (booking.status === "in_progress") return "상담 진행";
+  if (booking.status === "scheduled") return "상담 예정";
+  if (booking.status === "confirmed") return "전문가 확정";
+  if (booking.status === "contacting" && booking.paymentStatus === "paid") return "입금 확인 완료";
+  if (booking.status === "contacting") return "채팅/입금 확인";
+  return "예약 신청";
+}
+
+function getFlowStageDescription(booking: Booking) {
+  if (booking.status === "requested" && booking.paymentStatus === "paid") return "입금이 확인되었고 전문가 확정을 기다리는 단계입니다.";
+  if (booking.status === "requested") return "예약 신청이 들어왔고, 채팅방에서 선결제 또는 예약금 안내를 시작할 단계입니다.";
+  if (booking.status === "contacting" && booking.paymentStatus !== "paid") return "채팅방에서 입금 여부를 확인한 뒤 다음 단계로 넘깁니다.";
+  if (booking.status === "contacting" && booking.paymentStatus === "paid") return "입금이 확인되었고 전문가 확정을 기다리는 단계입니다.";
+  if (booking.status === "confirmed" || booking.status === "scheduled") return "예약이 확정되었고 상담 시작 전 단계입니다.";
+  if (booking.status === "in_progress") return "상담이 진행 중입니다. 통화가 끝나면 AI 요약 리포트를 생성합니다.";
+  if (booking.status === "completed") return "화상 상담 종료 후 AI 요약 리포트까지 완료된 상태입니다.";
+  if (booking.status === "cancelled") return "취소된 예약입니다. 필요하면 내부 메모만 추가하세요.";
+  if (booking.status === "no_show") return "고객 노쇼로 처리된 예약입니다. 필요하면 내부 메모만 추가하세요.";
+  return "운영 확인이 필요한 예약입니다.";
+}
+
+function getPrimaryFlowAction(previewBooking: Booking, savedBooking: Booking): BookingFlowAction | null {
+  if (["completed", "cancelled", "no_show", "refund_requested"].includes(previewBooking.status)) {
+    return null;
+  }
+
+  if (previewBooking.status === "requested") {
+    return {
+      description: "채팅방에서 입금 안내와 고객 확인을 시작합니다.",
+      key: "contacting",
+      label: "채팅/입금 확인 시작",
+      variant: "primary",
+    };
+  }
+
+  if (previewBooking.paymentStatus !== "paid") {
+    return {
+      description: "선결제 또는 예약금 입금이 확인되면 다음 저장 때 반영합니다.",
+      key: "payment",
+      label: "입금 확인",
+      variant: "primary",
+    };
+  }
+
+  if (previewBooking.status === "contacting") {
+    return {
+      description: "입금 확인 후 전문가가 예약을 확정합니다.",
+      key: "confirm",
+      label: "전문가 확정",
+      variant: "primary",
+    };
+  }
+
+  if (previewBooking.status === "confirmed" || previewBooking.status === "scheduled") {
+    return {
+      description: "상담 시간이 되었을 때 화상 상담 진행 상태로 넘깁니다.",
+      key: "start",
+      label: "상담 시작",
+      variant: "primary",
+    };
+  }
+
+  if (previewBooking.status === "in_progress") {
+    return {
+      description: canOpenCompletion(savedBooking.status)
+        ? "통화를 종료하고 AI 상담 요약 리포트를 생성합니다."
+        : "상담 시작 변경사항을 저장한 뒤 통화 종료와 AI 요약을 진행할 수 있습니다.",
+      disabled: !canOpenCompletion(savedBooking.status),
+      key: "summary",
+      label: "통화 종료/AI 요약",
+      variant: "primary",
+    };
+  }
+
+  return null;
+}
+
+function getFlowActionIcon(actionKey: BookingFlowActionKey) {
+  if (actionKey === "payment") return <CreditCard size={16} />;
+  if (actionKey === "confirm" || actionKey === "summary") return <CheckCircle2 size={16} />;
+  if (actionKey === "start") return <Video size={16} />;
+  return <Clock3 size={16} />;
+}
+
+function canUseExceptionActions(status: BookingStatus) {
+  return !["completed", "cancelled", "no_show", "refund_requested"].includes(status);
+}
+
+function BookingFlow({ booking }: { booking: Booking }) {
+  const steps = [
+    { key: "requested", label: "신청", done: ["requested", "contacting", "confirmed", "scheduled", "in_progress", "completed"].includes(booking.status) },
+    { key: "chat", label: "채팅방", done: ["contacting", "confirmed", "scheduled", "in_progress", "completed"].includes(booking.status) },
+    { key: "payment", label: "입금", done: booking.paymentStatus === "paid" },
+    { key: "confirmed", label: "전문가 확정", done: ["confirmed", "scheduled", "in_progress", "completed"].includes(booking.status) },
+    { key: "summary", label: "AI 요약", done: booking.status === "completed" },
+  ];
+  return (
+    <section className="booking-flow">
+      {steps.map((step) => (
+        <div className={step.done ? "is-done" : ""} key={step.key}>
+          <span>{step.done ? <CheckCircle2 size={13} /> : <Clock3 size={13} />}</span>
+          <strong>{step.label}</strong>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function canOpenCompletion(status: BookingStatus) {
+  return status === "scheduled" || status === "in_progress" || status === "completed";
 }
 
 function getVisibleDates(anchorDate: Date, view: CalendarView) {

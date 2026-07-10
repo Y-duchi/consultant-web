@@ -1,14 +1,13 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BellRing, FileImage, FileText, Phone, Search, Send } from "lucide-react";
+import { BellRing, FileImage, Phone, Search, Send } from "lucide-react";
 import {
   createPhoneAction,
   getChatThreadDetail,
   getChatThreads,
   getPartnerSessionToken,
-  getSharedReportDetail,
   markChatThreadRead,
-  type SharedReportDetail,
   uploadChatAttachment,
 } from "../../services/api";
 import {
@@ -21,14 +20,17 @@ import {
 import { useAuth } from "../auth/AuthContext";
 import { Badge, BookingStatusBadge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
+import { Modal } from "../../shared/ui/Modal";
 import { TextInput } from "../../shared/ui/Field";
 import { PageHeader } from "../../shared/ui/PageHeader";
 import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/StateViews";
 import { formatDateTime, formatTime } from "../../shared/utils/format";
 import type { Attachment, AuthUser, BookingStatus, ChatMessage } from "../../types/domain";
+import { AppReportCard } from "../reports/AppReportCard";
 
 export function ChatPage() {
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadThreadRef = useRef<string | null>(null);
@@ -41,6 +43,7 @@ export function ChatPage() {
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
   const [realtimeNotice, setRealtimeNotice] = useState<string | null>(null);
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
+  const requestedBookingId = searchParams.get("bookingId")?.trim() ?? "";
   const uploadMutation = useMutation({
     mutationFn: (file: File) => uploadChatAttachment(file, user ?? undefined),
     onSuccess: (attachment) => {
@@ -61,9 +64,12 @@ export function ChatPage() {
 
   useEffect(() => {
     if (!activeThreadId && filteredThreads.length > 0) {
-      setActiveThreadId(filteredThreads[0].thread.id);
+      const requestedThread = requestedBookingId
+        ? filteredThreads.find((item) => item.booking?.id === requestedBookingId)
+        : undefined;
+      setActiveThreadId((requestedThread ?? filteredThreads[0]).thread.id);
     }
-  }, [activeThreadId, filteredThreads]);
+  }, [activeThreadId, filteredThreads, requestedBookingId]);
 
   const detailQuery = useQuery({
     queryKey: ["chat-thread-detail", activeThreadId, user?.id, user?.businessId],
@@ -72,11 +78,7 @@ export function ChatPage() {
   });
 
   const detail = detailQuery.data;
-  const reportDetailQuery = useQuery({
-    queryKey: ["shared-report-detail", selectedReportId, user?.id, user?.businessId],
-    queryFn: () => getSharedReportDetail(selectedReportId!, user ?? undefined),
-    enabled: Boolean(selectedReportId),
-  });
+  const selectedReport = detail?.sharedReports.find((report) => report.id === selectedReportId);
   const activeBookingId = detail?.booking?.id;
   const isClosedBooking = Boolean(detail?.booking && isClosedBookingStatus(detail.booking.status));
   const socketBookingId = useMemo(() => {
@@ -254,7 +256,7 @@ export function ChatPage() {
       <PageHeader
         eyebrow="Communication"
         title="고객 대화"
-        description="고객 대화, 앱 예약 정보, 선택 리포트, 내부 메모를 한 화면에서 보며 응대합니다. 연락 버튼은 action만 준비하고 자동 메시지는 보내지 않습니다."
+        description="예약 신청 후 생성된 채팅방에서 고객 문의, 선결제 또는 예약금 입금 확인, 앱 얼굴 리포트와 내부 메모를 함께 보며 응대합니다."
       />
       {realtimeNotice ? (
         <div className="realtime-toast" role="status">
@@ -403,39 +405,15 @@ export function ChatPage() {
                   <span className="muted">선택 리포트 없음</span>
                 ) : (
                   detail.sharedReports.map((report) => (
-                    <button
-                      className={`report-item report-item-button ${selectedReportId === report.id ? "is-active" : ""}`}
+                    <AppReportCard
+                      compact
                       key={report.id}
-                      type="button"
                       onClick={() => setSelectedReportId(report.id)}
-                    >
-                      <span className="report-item-title">
-                        <FileText size={14} />
-                        <strong>{report.title}</strong>
-                      </span>
-                      <p>{report.summary}</p>
-                    </button>
+                      report={report}
+                      selected={selectedReportId === report.id}
+                    />
                   ))
                 )}
-                {selectedReportId ? (
-                  <div className="report-detail-panel">
-                    {reportDetailQuery.isLoading ? <span className="muted">리포트를 불러오는 중입니다</span> : null}
-                    {reportDetailQuery.isError ? <span className="form-error">{reportDetailQuery.error.message}</span> : null}
-                    {reportDetailQuery.data ? (
-                      <>
-                        <strong>{reportDetailQuery.data.report.title}</strong>
-                        <dl className="report-detail-list">
-                          {getReportDetailEntries(reportDetailQuery.data).map((entry) => (
-                            <div key={entry.label}>
-                              <dt>{entry.label}</dt>
-                              <dd>{entry.value}</dd>
-                            </div>
-                          ))}
-                        </dl>
-                      </>
-                    ) : null}
-                  </div>
-                ) : null}
               </section>
               <section className="chat-side-section">
                 <strong>내부 메모</strong>
@@ -447,6 +425,21 @@ export function ChatPage() {
           )}
         </aside>
       </section>
+
+      <Modal
+        bodyClassName="report-viewer-body"
+        className="report-viewer-modal"
+        open={Boolean(selectedReport)}
+        title={selectedReport?.title ?? "리포트 상세"}
+        onClose={() => setSelectedReportId(null)}
+        footer={
+          <Button variant="primary" onClick={() => setSelectedReportId(null)}>
+            확인
+          </Button>
+        }
+      >
+        {selectedReport ? <AppReportCard className="report-modal-card" report={selectedReport} /> : null}
+      </Modal>
     </>
   );
 }
@@ -490,40 +483,6 @@ function isClosedBookingStatus(status: BookingStatus) {
   return status === "cancelled" || status === "no_show" || status === "refund_requested";
 }
 
-function getReportDetailEntries(reportDetail: SharedReportDetail) {
-  const detail = reportDetail.detail ?? {};
-  const preferredEntries: Array<[string, string]> = [
-    ["personalColor", "퍼스널 컬러"],
-    ["faceShape", "얼굴형"],
-    ["skinType", "피부 타입"],
-    ["toneSummary", "톤 요약"],
-    ["recommendedMood", "추천 무드"],
-    ["summary", "종합 요약"],
-    ["shortSummary", "한줄 요약"],
-    ["skinAnalysisSummary", "피부 분석"],
-    ["baseMakeupGuide", "베이스 가이드"],
-  ];
-  const entries = preferredEntries
-    .map(([key, label]) => ({ label, value: readableReportValue(detail[key]) }))
-    .filter((entry) => entry.value);
-
-  if (entries.length > 0) {
-    return entries.slice(0, 8);
-  }
-
-  return Object.entries(detail)
-    .map(([key, value]) => ({ label: key, value: readableReportValue(value) }))
-    .filter((entry) => entry.value)
-    .slice(0, 8);
-}
-
-function readableReportValue(value: unknown): string {
-  if (value === null || value === undefined || value === "") return "";
-  if (Array.isArray(value)) return value.map(readableReportValue).filter(Boolean).join(", ");
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
-}
-
 function mapSocketSenderType(
   senderType: ConsultingRealtimeMessageEvent["senderType"],
 ): ChatMessage["senderType"] {
@@ -560,12 +519,19 @@ function getMessageKey(message: LiveChatMessage) {
 }
 
 function mergeHistoryMessages(current: LiveChatMessage[], historyMessages: LiveChatMessage[]) {
-  const historyKeys = new Set(historyMessages.map(getMessageKey));
-  const pendingMessages = current.filter(
-    (item) => (item.deliveryStatus === "pending" || item.deliveryStatus === "failed") && !historyKeys.has(getMessageKey(item)),
-  );
+  if (historyMessages.length === 0) {
+    return current;
+  }
 
-  return [...historyMessages, ...pendingMessages];
+  const byKey = new Map<string, LiveChatMessage>();
+  for (const message of current) {
+    byKey.set(getMessageKey(message), message);
+  }
+  for (const message of historyMessages) {
+    byKey.set(getMessageKey(message), message);
+  }
+
+  return Array.from(byKey.values()).sort((a, b) => a.sentAt.localeCompare(b.sentAt));
 }
 
 function lastMessage(thread: { messages: Array<{ body: string }> }) {

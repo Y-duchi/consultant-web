@@ -1,17 +1,19 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { MessageSquareText, Phone, Search } from "lucide-react";
+import { CalendarCheck2, MessageSquareText, Phone, Search } from "lucide-react";
 import { createPhoneAction, getCustomerDetail, getCustomers, getExpertName } from "../../services/api";
 import { useAuth } from "../auth/AuthContext";
 import { BookingStatusBadge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Drawer } from "../../shared/ui/Drawer";
+import { Modal } from "../../shared/ui/Modal";
 import { SelectInput, TextInput } from "../../shared/ui/Field";
 import { PageHeader } from "../../shared/ui/PageHeader";
 import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/StateViews";
 import { formatCurrency, formatDate, formatDateTime, toInputDate } from "../../shared/utils/format";
 import type { Customer } from "../../types/domain";
+import { AppReportCard } from "../reports/AppReportCard";
 
 export function CustomersPage() {
   const { user } = useAuth();
@@ -21,6 +23,7 @@ export function CustomersPage() {
   const [sort, setSort] = useState<"lastActiveDesc" | "nameAsc" | "paidDesc">("lastActiveDesc");
   const [activeAfter, setActiveAfter] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
 
   const customersQuery = useQuery({
     queryKey: ["customers", query, tag, sort, user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
@@ -43,6 +46,12 @@ export function CustomersPage() {
     customersQuery.data?.forEach((customer) => customer.tags.forEach((item) => tags.add(item)));
     return Array.from(tags).sort();
   }, [customersQuery.data]);
+  const selectedReport = detailQuery.data?.sharedReports.find((report) => report.id === selectedReportId);
+
+  const closeCustomer = () => {
+    setSelectedCustomerId(null);
+    setSelectedReportId(null);
+  };
 
   if (customersQuery.isLoading) return <LoadingState label="고객 목록을 불러오는 중입니다" />;
   if (customersQuery.isError) return <ErrorState message={customersQuery.error.message} onRetry={() => customersQuery.refetch()} />;
@@ -98,7 +107,7 @@ export function CustomersPage() {
         open={Boolean(selectedCustomerId)}
         title={detailQuery.data?.customer.name ?? "고객 상세"}
         description={detailQuery.data ? `${detailQuery.data.customer.phone} · ${detailQuery.data.customer.email}` : undefined}
-        onClose={() => setSelectedCustomerId(null)}
+        onClose={closeCustomer}
         footer={
           detailQuery.data ? (
             <>
@@ -145,6 +154,22 @@ export function CustomersPage() {
                       <BookingStatusBadge status={booking.status} />
                     </div>
                     <p>{formatDateTime(booking.startsAt)} · {getExpertName(booking.expertId)} · {formatCurrency(booking.paidAmount)}</p>
+                    <div className="row-actions">
+                      <Button
+                        variant="secondary"
+                        icon={<CalendarCheck2 size={15} />}
+                        onClick={() => navigate(`/workspace/bookings?bookingId=${booking.id}`)}
+                      >
+                        예약 상태 변경
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        icon={<MessageSquareText size={15} />}
+                        onClick={() => navigate(`/workspace/chat?bookingId=${booking.id}`)}
+                      >
+                        채팅/입금
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -152,15 +177,17 @@ export function CustomersPage() {
 
             <section className="panel">
               <div className="panel-header">
-                <h3>앱 선택 리포트와 처방 노트</h3>
+                <h3>앱 얼굴 리포트와 처방 노트</h3>
               </div>
               <div className="panel-body report-list">
                 {detailQuery.data.sharedReports.map((report) => (
-                  <div className="report-item" key={report.id}>
-                    <strong>{report.title}</strong>
-                    <p>{report.summary}</p>
-                    <span className="tag">{report.source === "customer_app" ? "고객 앱 선택" : "전문가 결과"}</span>
-                  </div>
+                  <AppReportCard
+                    compact
+                    key={report.id}
+                    onClick={() => setSelectedReportId(report.id)}
+                    report={report}
+                    selected={selectedReportId === report.id}
+                  />
                 ))}
                 {detailQuery.data.consultationSummaries.map((summary) => (
                   <div className="summary-item" key={summary.id}>
@@ -192,6 +219,21 @@ export function CustomersPage() {
           </div>
         ) : null}
       </Drawer>
+
+      <Modal
+        bodyClassName="report-viewer-body"
+        className="report-viewer-modal"
+        open={Boolean(selectedReport)}
+        title={selectedReport?.title ?? "리포트 상세"}
+        onClose={() => setSelectedReportId(null)}
+        footer={
+          <Button variant="primary" onClick={() => setSelectedReportId(null)}>
+            확인
+          </Button>
+        }
+      >
+        {selectedReport ? <AppReportCard className="report-modal-card" report={selectedReport} /> : null}
+      </Modal>
     </>
   );
 }

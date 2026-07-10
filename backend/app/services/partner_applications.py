@@ -416,6 +416,21 @@ def complete_password_change(principal: PartnerPrincipal, new_password: str) -> 
   )
 
 
+def find_partner_account_for_login(email: str) -> PartnerAccount | None:
+  normalized = email.strip().lower()
+  aliases = {
+    "seah.kim@aura-partner.local": "expert.seah@aura.example",
+    "partner@aura.example": "partner@aura.example",
+    "partner-b@aura.example": "partner-b@aura.example",
+  }
+  target_email = aliases.get(normalized, normalized)
+  return next((item for item in _accounts if item.email.lower() == target_email), None)
+
+
+def find_partner_account(account_id: str) -> PartnerAccount | None:
+  return next((item for item in _accounts if item.id == account_id), None)
+
+
 def _set_status(
   application_id: str,
   status: PartnerApplicationStatus,

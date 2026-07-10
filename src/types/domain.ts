@@ -369,7 +369,7 @@ export interface ManagerSettings {
   };
   integrations: {
     phoneProvider: "none" | "twilio" | "pinpoint" | "sens";
-    chatProvider: "mock" | "websocket" | "firebase" | "sendbird" | "stream";
+    chatProvider: "local_test" | "websocket" | "firebase" | "sendbird" | "stream";
     smsProvider: "none" | "twilio" | "pinpoint" | "sens";
   };
   accountRoles: Array<{

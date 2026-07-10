@@ -77,7 +77,7 @@ const bookingsReady = (await textIncludes("앱 예약 관리")) && (await textIn
 await go("/workspace/chat");
 const chatReady = (await textIncludes("고객 대화")) && (await textIncludes("고객 프로필")) && (await textIncludes("전송"));
 await go("/workspace/completion");
-const completionReady = (await textIncludes("상담 완료 및 처방 노트 전달")) && (await textIncludes("완료 처리할 예약"));
+const completionReady = (await textIncludes("상담 완료 및 AI 요약 리포트")) && (await textIncludes("완료 처리할 예약"));
 
 const overlayResult = await cdp("Runtime.evaluate", {
   expression: `Boolean(document.querySelector('.vite-error-overlay, #webpack-dev-server-client-overlay, [data-nextjs-dialog]'))`,

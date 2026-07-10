@@ -2,7 +2,7 @@
 
 뷰티 종합 플랫폼 앱의 전문가, 업체, 프리랜서 파트너가 고객 상담 예약과 AI 리포트를 관리하는 React 기반 웹 매니저입니다.
 
-현재 프론트는 `src/services/api.ts`의 mock service layer로 동작하고, `backend/`에는 같은 리소스 구조의 FastAPI mock API와 RDS 스키마 초안이 준비되어 있습니다. 실제 RDS 테이블 생성은 아직 실행하지 않았고, 추후 승인 후 마이그레이션을 적용하는 전제입니다.
+현재 프론트는 `src/services/api.ts`에서 FastAPI 백엔드를 직접 호출합니다. 관리자/파트너 웹 호환 API는 실제 RDS의 `consulting_*`, `analysis_reports`, `makeup_feedback_reports`, `users`, `media_assets` 테이블을 읽어 예약, 채팅, 고객, 전문가, 리포트, 상담 요약 데이터를 구성합니다. 입점 신청 전용 테이블이 없는 환경에서는 신청 목록을 빈 상태로 보여주며 샘플 신청 데이터를 섞지 않습니다.
 
 관리자와 업체/전문가 화면은 라우트와 레이아웃을 분리합니다. 운영자는 `/admin/*`, 승인된 파트너는 `/workspace/*`, 승인 전 신청자는 `/application-status`만 사용합니다.
 임시 비밀번호로 승인된 파트너는 `/workspace/password`에서 새 비밀번호를 설정하기 전까지 운영 화면 접근이 제한됩니다.
@@ -99,8 +99,8 @@ npm run build
 ## 구현된 주요 화면
 
 - 로그인/입장: 관리자 로그인, 업체/전문가 로그인, 입점 신청 분기
-- 입점 신청: 업체/프리랜서 정보, 사업자등록증 PDF, 국가 미용사 면허증 PDF, 추가 자격증 PDF mock 제출
-- 입점 심사: 관리자 신청 목록, 상태 필터, 상세 드로어, 서류 열람 mock, 보완 요청/반려/승인 및 계정 생성
+- 입점 신청: 업체/프리랜서 정보, 사업자등록증 PDF, 국가 미용사 면허증 PDF, 추가 자격증 PDF 제출 UI
+- 입점 심사: 관리자 신청 목록, 상태 필터, 상세 드로어, 서류 열람, 보완 요청/반려/승인 및 계정 생성
 - 신청 상태: 승인 전 업체/전문가가 로그인하면 운영 메뉴 대신 검토 대기/보완 요청/반려 상태 확인
 - 대시보드: 오늘 앱 예약, 오늘 결제액, 리포트 전달 대기, 사업자 인증 상태, 미응답 메시지, 30분 슬롯 재고
 - 예약 관리: 월/주/일 캘린더, 10:00-20:00 30분 슬롯, 가능 시간/휴무/점심/예외 시간 조정, 예약 상세 드로어
@@ -108,7 +108,7 @@ npm run build
 - 고객 대화: 대화 목록, 채팅창, 고객 프로필, 앱 예약 정보, 선택 리포트, 연락 action placeholder
 - 상담 완료/처방 노트 전달: 내부 메모, 고객용 뷰티 처방 노트, 추천사항, 전달 리포트 선택, 완료 상태 및 리뷰 요청 상태 갱신
 - 리뷰 관리: 완료 예약 연결 리뷰 조회, 별점/상태/날짜/정렬 필터, 숨김/신고/답글 UI
-- 파트너/전문가 관리: 업체 정보, 사업자 인증 문서, 전문가 프로필, 가격, 전문 분야, 노출 상태, 자격증 mock 업로드
+- 파트너/전문가 관리: 업체 정보, 사업자 인증 문서, 전문가 프로필, 가격, 전문 분야, 노출 상태, 자격증 업로드 UI
 - 설정: 영업시간, 휴무일, 취소/환불 정책, 알림, 계정 권한, 전화/SMS/채팅 연동 placeholder
 
 ## 프로젝트 구조
@@ -117,7 +117,7 @@ npm run build
 src/
   app/                 # 라우팅과 앱 레이아웃
   features/            # 페이지 단위 기능
-  services/            # API 교체 지점과 mock 데이터
+  services/            # FastAPI 연동과 실제 데이터 캐시
   shared/ui/           # 재사용 UI 컴포넌트
   shared/utils/        # 포맷터와 옵션 유틸
   types/               # 도메인 타입
@@ -147,7 +147,7 @@ src/
 - FastAPI router: `backend/app/routers/applications.py`
 - Admin/partner router: `backend/app/routers/admin.py`, `backend/app/routers/partner.py`
 - Pydantic schema: `backend/app/schemas/partner_applications.py`
-- Mock service: `backend/app/services/partner_applications.py`
+- Partner application service: `backend/app/services/partner_applications.py`
 - RDS SQL draft: `backend/db/partner_applications_schema.sql`
 
 운영자/파트너 API prefix:
@@ -155,16 +155,17 @@ src/
 - Applicant: `POST /api/partner-applications`, `GET /api/partner-applications/{application_id}/status`
 - Admin: `/api/admin/dashboard`, `/api/admin/partner-applications`, `/api/admin/partner-applications/{application_id}/needs-update`, `/api/admin/partner-applications/{application_id}/reject`, `/api/admin/partner-applications/{application_id}/approve`, `/api/admin/partner-applications/documents/{document_id}/access`, `/api/admin/businesses`, `/api/admin/bookings`, `/api/admin/summary-jobs`
 - Partner: `/api/partner/me`, `/api/partner/me/password`, `/api/partner/dashboard`, `/api/partner/bookings`, `/api/partner/customers`, `/api/partner/chats`, `/api/partner/consultations/{booking_id}/summary`, `/api/partner/events`
+- Partner web compat: `/api/consulting/partner/login`, `/api/consulting/partner/dashboard`, `/api/consulting/partner/bookings`, `/api/consulting/partner/chat/threads`, `/api/consulting/partner/shared-reports`, `/api/consulting/partner/summaries/{booking_id}/generate`
 - Partner event debug: `/api/partner/events/snapshot`
 - Customer app summary: `/api/consulting/bookings/{booking_id}/summary`
 
-백엔드 mock API는 운영자 요청에 `X-Admin-Id`와 `X-Aura-Role`, 파트너 요청에 `X-Partner-Account-Id`, `X-Partner-Role`, `X-Business-Id`, `X-Workspace-Scope`를 요구합니다. `expert_personal` scope는 `X-Expert-Id`가 없으면 거절됩니다. Partner 업무 API는 이 principal을 승인된 `partner_account`와 active `business_member`에 다시 대조하고, 임시 비밀번호 변경 대상 계정은 `/partner/me`와 `/partner/me/password` 외의 workspace API 접근을 거절합니다. 이 header principal은 로컬 계약 검증용이며, 실서비스 전에는 세션/JWT/Cognito 클레임으로 교체해야 합니다.
+백엔드 API는 운영자 요청에 `X-Admin-Id`와 `X-Aura-Role`을 요구합니다. 웹 프론트가 쓰는 `/api/consulting/partner` 호환 API는 실제 `consulting_partner_accounts` 행에서 발급한 `Bearer partner:{account_id}` 세션 토큰과 `{ data, error }` envelope를 사용합니다. `expert_personal` scope는 계정의 `expert_id` 범위로 제한됩니다.
 입점 신청자의 public API는 제출과 제한된 상태 조회만 허용하고, 서류 presigned URL, 전체 목록, 상세 검토 로그, 승인/반려는 admin API 뒤에 둡니다.
 
-파트너 고객 조회는 별도 고객 복사본을 만들지 않고 `consulting_bookings -> consulting_experts -> businesses -> users` 관계로 계산합니다. DB 초안에는 이 계약을 드러내는 `partner_booking_customers` view가 포함되어 있고, 백엔드 mock도 booking source row가 `business_id`를 직접 소유하지 않도록 맞췄습니다.
+파트너 고객 조회는 별도 고객 복사본을 만들지 않고 `consulting_bookings -> consulting_experts -> users` 관계로 계산합니다. 현재 운영 DB에서는 파트너 범위를 `expert_id`로 제한하고, 웹 도메인의 `business_id`는 해당 `expert_id`와 동일한 scope id로 매핑합니다.
 고객 앱 요약 조회는 `consulting_summaries.visible_to_customer=true`와 `consulting_bookings.status='completed'`를 동시에 만족하는 저장 요약만 반환합니다. DB 초안에는 이 기준을 고정하는 `customer_visible_consulting_summaries` view가 포함되어 있습니다.
 
-파트너 이벤트 스트림은 브라우저 `EventSource` 제약 때문에 header 외에도 `accountId`, `role`, `businessId`, `expertId`, `workspaceScope` query를 mock principal로 받을 수 있습니다. 새 앱 예약/예약 변경 이벤트는 `expert_id`에서 `business_id`를 계산한 뒤 해당 업체/전문가에게만 전달됩니다. 전문가 개인 scope는 `expert_id`가 정확히 일치하는 이벤트만 받고, 업체 전체 이벤트는 대표/매니저 scope에서만 소비합니다.
+파트너 이벤트 스트림은 브라우저 `EventSource` 제약 때문에 header 외에도 `accountId`, `role`, `businessId`, `expertId`, `workspaceScope` query를 받을 수 있습니다. 새 앱 예약/예약 변경 이벤트는 `expert_id`에서 workspace scope를 계산한 뒤 해당 전문가에게만 전달됩니다.
 RDS 초안에는 `partner_event_outbox`가 포함되어 있어 예약/요약/리뷰/환불/미읽은 채팅 이벤트를 업체·전문가 scope와 증가 sequence로 저장하고, SSE 재연결 시 `Last-Event-ID` 또는 `afterId` cursor 이후 이벤트를 replay할 수 있습니다. 채팅 본문은 기존 상담 WebSocket을 유지하고, 대시보드 갱신 이벤트만 별도 stream으로 분리합니다.
 SSE가 끊기거나 이벤트 cursor를 놓친 경우에는 공통 fallback refetch root로 대시보드, 예약, 상담 완료 후보, 채팅 목록, 리뷰, AI 요약 작업 목록을 재조회합니다.
 

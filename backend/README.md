@@ -59,7 +59,7 @@ Business registration certificates and credentials should stay private and be ac
 
 ## Partner application workflow
 
-The local backend now exposes mock FastAPI endpoints for the partner onboarding flow. These endpoints keep data in memory so they are safe to run locally and do not create RDS tables.
+The backend exposes FastAPI endpoints for partner onboarding and partner workspace operations. The web compatibility routes under `/api/consulting/partner/*` read the live consulting tables directly. If the optional `partner_applications` table has not been migrated, admin application lists return an empty state instead of sample rows.
 
 ```text
 POST /api/partner-applications
@@ -94,7 +94,7 @@ GET  /api/partner/events/snapshot
 GET  /api/consulting/bookings/{booking_id}/summary
 ```
 
-The admin mock requires `X-Admin-Id` plus `X-Aura-Role: admin|operator`. Partner application list/detail/decision/document-access routes are admin-only; applicants only get the restricted status response and do not receive private document storage keys, presigned URLs, review logs, or generated account details. The partner mock requires `X-Partner-Account-Id`, `X-Partner-Role: business_manager|expert`, `X-Business-Id`, and `X-Workspace-Scope`. Expert personal scope also requires `X-Expert-Id`. Partner workspace APIs validate that principal against an approved `partner_account` and active `business_member`; password-change-required accounts are limited to `/partner/me` and `/partner/me/password`. The SSE endpoint also accepts the same partner principal as query params (`accountId`, `role`, `businessId`, `expertId`, `workspaceScope`) because browser `EventSource` cannot set custom headers. Bookings, customers, chats, summaries, and partner events are filtered server-side from that principal. Expert personal scope only receives non-heartbeat events with an exact matching `expert_id`; business-wide events remain manager-only. Partner customer lists are derived from `consulting_bookings -> consulting_experts -> businesses -> users`; booking source rows should not duplicate customer data or own `business_id` directly. Replace these header/query mocks with a real session/JWT/Cognito principal before production.
+The admin API requires `X-Admin-Id` plus `X-Aura-Role: admin|operator`. Partner application list/detail/decision/document-access routes are admin-only; applicants only get the restricted status response and do not receive private document storage keys, presigned URLs, review logs, or generated account details. The web compatibility partner API validates `Bearer partner:{account_id}` against `consulting_partner_accounts`. Bookings, customers, chats, summaries, and reports are filtered server-side from that account's `expert_id` scope.
 
 Run the contract smoke check without installing FastAPI locally:
 
@@ -103,7 +103,7 @@ python3 backend/scripts/smoke_partner_contract.py
 ```
 
 It verifies admin route role guards, partner principal guards, join-derived booking business scope, business tenant isolation, expert personal scope, scoped booking create/update events, transactional approval rollback, AI summary generation, and customer-app visibility filtering.
-The AI summary mock records a failed `consultation_summary_jobs` row when the transcript or memo contains `fail` or `실패`; calling the same generate endpoint again with corrected text is the retry path.
+The AI summary endpoint stores a `consulting_summaries` row and marks the booking completed after the video-consultation transcript is submitted.
 Partner booking, summary, review, refund, and unread-chat events should be persisted through `partner_event_outbox` with a monotonically increasing `sequence`. SSE responses emit event `id:` fields, and clients can replay scoped events by `Last-Event-ID` or `afterId` cursor. React Query fallback refetch covers missing or expired cursors.
 The frontend fallback refetch roots are centralized in `partnerEventRules` so disconnect recovery covers dashboard, bookings, completion candidates, chat threads, reviews, and summary jobs.
 
