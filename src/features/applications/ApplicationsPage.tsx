@@ -57,10 +57,13 @@ export function ApplicationsPage() {
 
   useEffect(() => {
     setReviewMemo(selectedApplication?.reviewMemo ?? "");
+  }, [selectedApplication?.id, selectedApplication?.reviewMemo]);
+
+  useEffect(() => {
     setGeneratedAccount(null);
     setGeneratedMember(null);
     setDocumentAccess(null);
-  }, [selectedApplication?.id, selectedApplication?.reviewMemo]);
+  }, [selectedId]);
 
   const refreshApplications = async () => {
     await queryClient.invalidateQueries({ queryKey: ["partner-applications"] });
