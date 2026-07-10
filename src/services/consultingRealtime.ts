@@ -1,3 +1,5 @@
+import type { ConsultingCallLanguageCode } from "../types/domain";
+
 export type ConsultingParticipantType = "user" | "expert" | "operator";
 
 export type ConsultingSocketStatus =
@@ -25,6 +27,15 @@ export type ConsultingRealtimeMessageEvent = {
   type: "message.new";
 };
 
+export type ConsultingCaptionTranslationEvent = {
+  bookingId: string;
+  resultId: string;
+  sourceLanguageCode: ConsultingCallLanguageCode;
+  targetLanguageCode: "ko" | "en";
+  translatedContent: string;
+  type: "caption.translation";
+};
+
 export type ConsultingServerSocketEvent =
   | {
       bookingId: string;
@@ -38,6 +49,7 @@ export type ConsultingServerSocketEvent =
       type: "message.history";
     }
   | ConsultingRealtimeMessageEvent
+  | ConsultingCaptionTranslationEvent
   | {
       bookingId: string;
       clientMessageId: string;
@@ -97,6 +109,14 @@ type ConsultingClientSocketEvent =
       bookingId: string;
       readAt: string;
       type: "read";
+    }
+  | {
+      bookingId: string;
+      resultId: string;
+      sourceLanguageCode: ConsultingCallLanguageCode;
+      targetLanguageCode: "ko" | "en";
+      translatedContent: string;
+      type: "caption.translation";
     };
 
 type ConnectOptions = {
@@ -116,15 +136,45 @@ export type ConsultingConversationSocketClient = {
     clientMessageId: string;
     mediaIds?: string[];
   }) => boolean;
+  sendCaptionTranslation: (payload: Omit<ConsultingCaptionTranslationEvent, "type">) => boolean;
 };
 
 const INITIAL_RECONNECT_DELAY_MS = 500;
 const MAX_RECONNECT_DELAY_MS = 5000;
 
-function getApiBaseUrl() {
-  const raw = import.meta.env.VITE_API_BASE_URL?.trim() || "http://127.0.0.1:8000";
+function getConsultingRealtimeApiBaseUrl() {
+  const explicit = import.meta.env.VITE_CONSULTING_API_BASE_URL?.trim();
+  if (explicit) return normalizeConsultingApiBaseUrl(explicit);
+
+  const partnerApiBaseUrl = import.meta.env.VITE_PARTNER_API_BASE_URL?.trim();
+  if (partnerApiBaseUrl) return normalizeConsultingApiBaseUrl(partnerApiBaseUrl);
+
+  return normalizeConsultingApiBaseUrl(import.meta.env.VITE_API_BASE_URL?.trim() || "http://127.0.0.1:8000");
+}
+
+function normalizeConsultingApiBaseUrl(raw: string) {
   const trimmed = raw.replace(/\/+$/, "");
-  return trimmed.endsWith("/api") ? trimmed : `${trimmed}/api`;
+
+  try {
+    const url = new URL(trimmed);
+    const pathname = url.pathname.replace(/\/+$/, "");
+    url.pathname = normalizeConsultingApiPath(pathname);
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    if (trimmed.endsWith("/api/consulting/partner")) return trimmed.slice(0, -"/partner".length);
+    if (trimmed.endsWith("/consulting/partner")) return trimmed.slice(0, -"/partner".length);
+    if (trimmed.endsWith("/api/consulting")) return trimmed;
+    if (trimmed.endsWith("/api")) return `${trimmed}/consulting`;
+    return `${trimmed}/api/consulting`;
+  }
+}
+
+function normalizeConsultingApiPath(pathname: string) {
+  if (pathname.endsWith("/api/consulting/partner")) return pathname.slice(0, -"/partner".length);
+  if (pathname.endsWith("/consulting/partner")) return pathname.slice(0, -"/partner".length);
+  if (pathname.endsWith("/api/consulting")) return pathname;
+  if (pathname.endsWith("/api")) return `${pathname}/consulting`;
+  return `${pathname}/api/consulting`;
 }
 
 export function buildConsultingWebSocketUrl({
@@ -136,9 +186,9 @@ export function buildConsultingWebSocketUrl({
   bookingId: string;
   participantType: ConsultingParticipantType;
 }) {
-  const url = new URL(getApiBaseUrl());
+  const url = new URL(getConsultingRealtimeApiBaseUrl());
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.pathname = `${url.pathname.replace(/\/+$/, "")}/consulting/ws/bookings/${encodeURIComponent(bookingId)}`;
+  url.pathname = `${url.pathname.replace(/\/+$/, "")}/ws/bookings/${encodeURIComponent(bookingId)}`;
   url.searchParams.set("participantType", participantType);
   if (authToken) url.searchParams.set("token", authToken);
   return url.toString();
@@ -162,7 +212,7 @@ export function connectConsultingConversationSocket({
   participantType,
 }: ConnectOptions): ConsultingConversationSocketClient {
   let socket: WebSocket | null = null;
-  let reconnectTimer: ReturnType<typeof window.setTimeout> | null = null;
+  let reconnectTimer: number | null = null;
   let reconnectAttempt = 0;
   let closedByClient = false;
 
@@ -230,6 +280,7 @@ export function connectConsultingConversationSocket({
       setStatus("idle");
     },
     send,
+    sendCaptionTranslation: (payload) => send({ ...payload, type: "caption.translation" }),
     sendMessage: (payload) => send({ ...payload, type: "message.send" }),
   };
 }

@@ -1,15 +1,21 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarRange, CheckCircle2, Clock3, CreditCard, MessageSquareText, Phone, Save, Search, Video, XCircle } from "lucide-react";
+import { CalendarRange, CheckCircle2, Clock3, CreditCard, MessageSquareText, Mic, MicOff, Phone, Save, Search, Video, VideoOff, XCircle } from "lucide-react";
 import {
-  createPhoneAction,
+  endBookingCall,
   getAvailability,
   getBookingDetail,
   getBookings,
   getCustomerName,
   getExperts,
+  getPartnerSessionToken,
+  getSettings,
+  joinBookingCall,
   saveBookingChanges,
+  startBookingCallTranscription,
+  stopBookingCallTranscription,
+  translateBookingCallCaption,
   updateAvailability,
 } from "../../services/api";
 import type { BookingSaveChangesInput } from "../../services/api";
@@ -17,14 +23,17 @@ import { useAuth } from "../auth/AuthContext";
 import { BookingStatusBadge, PaymentStatusBadge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Drawer } from "../../shared/ui/Drawer";
+import { Modal } from "../../shared/ui/Modal";
 import { Field, SelectInput, TextArea, TextInput } from "../../shared/ui/Field";
 import { PageHeader } from "../../shared/ui/PageHeader";
 import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/StateViews";
 import { Tabs } from "../../shared/ui/Tabs";
 import { bookingStatusOptions } from "../../shared/utils/options";
 import { addDays, formatCurrency, formatDate, formatDateTime, formatTime, toInputDate } from "../../shared/utils/format";
-import type { AvailabilitySlot, Booking, BookingStatus } from "../../types/domain";
+import type { AvailabilitySlot, Booking, BookingStatus, ConsultingCaptionTranslation, ConsultingCallJoinResult, ConsultingCallLanguageCode, ConsultingCallState, ManagerSettings, OperatingHours } from "../../types/domain";
 import { AppReportCard } from "../reports/AppReportCard";
+import { startWebChimeMeeting, type WebChimeMeetingController, type WebChimeTranscriptResult } from "../../services/chimeMeetingClient";
+import { connectConsultingConversationSocket, type ConsultingConversationSocketClient, type ConsultingParticipantType, type ConsultingServerSocketEvent } from "../../services/consultingRealtime";
 
 type CalendarView = "month" | "week" | "day";
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
@@ -42,6 +51,21 @@ type BookingEditDraft = {
   date: string;
   startsAt: string;
   durationMinutes: 30 | 60;
+};
+type ScheduleNotice = {
+  dateKey: string;
+  label: string;
+  reason: string;
+};
+type CallCaptionViewModel = {
+  id: string;
+  isPartial: boolean;
+  resultId: string;
+  sourceLanguageCode: ConsultingCallLanguageCode;
+  speakerLabel: string;
+  targetLanguageCode?: "ko" | "en";
+  transcript: string;
+  translatedContent?: string;
 };
 
 const viewOptions: Array<{ value: CalendarView; label: string }> = [
@@ -67,10 +91,26 @@ export function BookingsPage() {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<BookingStatus | "all">("all");
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
+  const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
   const [pendingStatus, setPendingStatus] = useState<BookingStatus | null>(null);
   const [pendingPaymentPaid, setPendingPaymentPaid] = useState(false);
   const [saveFeedback, setSaveFeedback] = useState("");
+  const [callFeedback, setCallFeedback] = useState("");
+  const [callJoinResult, setCallJoinResult] = useState<ConsultingCallJoinResult | null>(null);
+  const [callState, setCallState] = useState<ConsultingCallState | null>(null);
+  const [callLanguageCode, setCallLanguageCode] = useState<ConsultingCallLanguageCode>("ko-KR");
+  const [callConnectionStatus, setCallConnectionStatus] = useState("idle");
+  const [callConnectionError, setCallConnectionError] = useState("");
+  const [isCallMuted, setIsCallMuted] = useState(false);
+  const [isCallVideoEnabled, setIsCallVideoEnabled] = useState(true);
+  const callAudioRef = useRef<HTMLAudioElement | null>(null);
+  const callLocalVideoRef = useRef<HTMLVideoElement | null>(null);
+  const callRemoteVideoRef = useRef<HTMLVideoElement | null>(null);
+  const chimeClientRef = useRef<WebChimeMeetingController | null>(null);
+  const captionSocketRef = useRef<ConsultingConversationSocketClient | null>(null);
+  const translatedCaptionIdsRef = useRef<Set<string>>(new Set());
+  const [callCaptions, setCallCaptions] = useState<CallCaptionViewModel[]>([]);
   const [editDraft, setEditDraft] = useState<BookingEditDraft>({
     type: "",
     internalMemo: "",
@@ -86,6 +126,8 @@ export function BookingsPage() {
     note: "",
   });
   const requestedBookingId = searchParams.get("bookingId")?.trim() ?? "";
+  const requestedCall = searchParams.get("call") === "1";
+  const autoJoinBookingIdRef = useRef<string | null>(null);
 
   const bookingsQuery = useQuery({
     queryKey: ["bookings", query, status, user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
@@ -94,6 +136,10 @@ export function BookingsPage() {
   const expertsQuery = useQuery({
     queryKey: ["experts", user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
     queryFn: () => getExperts(user ?? undefined),
+  });
+  const settingsQuery = useQuery({
+    queryKey: ["settings", user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
+    queryFn: () => getSettings(user ?? undefined),
   });
   const selectedExpertId = expertsQuery.data?.[0]?.id ?? "exp-1";
   const availabilityQuery = useQuery({
@@ -130,9 +176,60 @@ export function BookingsPage() {
     mutationFn: (slot: AvailabilitySlot) => updateAvailability(slot),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["availability"] }),
   });
+  const joinCallMutation = useMutation({
+    mutationFn: (booking: Booking) => joinBookingCall(booking.id, callLanguageCode, user ?? undefined),
+    onSuccess: (result) => {
+      setCallJoinResult(result);
+      setCallState(null);
+      setCallConnectionError("");
+      setCallConnectionStatus("connecting");
+      setCallFeedback("Chime 입장 정보가 준비되었습니다. 브라우저 권한을 확인해 주세요.");
+      saveChangesMutation.mutate({ bookingId: result.bookingId, changes: { status: "in_progress" } });
+    },
+    onError: (error) => {
+      setCallFeedback(error instanceof Error ? error.message : "화상 상담 입장 정보를 가져오지 못했습니다.");
+    },
+  });
+  const startTranscriptionMutation = useMutation({
+    mutationFn: ({ booking, transcriptionConsentAccepted }: { booking: Booking; transcriptionConsentAccepted: boolean }) =>
+      startBookingCallTranscription(booking.id, callLanguageCode, user ?? undefined, transcriptionConsentAccepted),
+    onSuccess: (result) => {
+      setCallState(result);
+      setCallFeedback(getCallTranscriptionLabel(result.transcription.status, result.transcription.mode));
+    },
+    onError: (error) => {
+      setCallFeedback(error instanceof Error ? error.message : "실시간 자막을 시작하지 못했습니다.");
+    },
+  });
+  const stopTranscriptionMutation = useMutation({
+    mutationFn: (booking: Booking) => stopBookingCallTranscription(booking.id, user ?? undefined),
+    onSuccess: (result) => {
+      setCallState(result);
+      setCallFeedback(getCallTranscriptionLabel(result.transcription.status, result.transcription.mode));
+    },
+    onError: (error) => {
+      setCallFeedback(error instanceof Error ? error.message : "실시간 자막을 중지하지 못했습니다.");
+    },
+  });
+
+  const stopWebMeeting = useCallback(async () => {
+    const client = chimeClientRef.current;
+    chimeClientRef.current = null;
+    if (!client) return;
+    await client.stop().catch((error: unknown) => {
+      setCallConnectionError(error instanceof Error ? error.message : "Chime 미팅 정리에 실패했습니다.");
+    });
+    setCallConnectionStatus("stopped");
+    setIsCallMuted(false);
+    setIsCallVideoEnabled(true);
+  }, []);
 
   const bookings = bookingsQuery.data ?? [];
   const visibleDates = useMemo(() => getVisibleDates(anchorDate, view), [anchorDate, view]);
+  const scheduleSummary = useMemo(
+    () => buildVisibleScheduleSummary(visibleDates, settingsQuery.data),
+    [settingsQuery.data, visibleDates],
+  );
   const currentLabel = useMemo(() => {
     if (view === "day") return formatDate(anchorDate.toISOString());
     if (view === "week") return `${formatDate(visibleDates[0].toISOString())} - ${formatDate(visibleDates[visibleDates.length - 1].toISOString())}`;
@@ -140,6 +237,7 @@ export function BookingsPage() {
   }, [anchorDate, view, visibleDates]);
 
   const selectedDetail = detailQuery.data;
+  const selectedReport = selectedDetail?.sharedReports.find((report) => report.id === selectedReportId);
   const previewBooking = useMemo(() => {
     if (!selectedDetail) return null;
     return makePreviewBooking(selectedDetail.booking, editDraft, pendingStatus, pendingPaymentPaid);
@@ -153,76 +251,233 @@ export function BookingsPage() {
         noteDraft.trim()
       ),
   );
+  const callTranscription = callState?.transcription ?? callJoinResult?.transcription ?? null;
 
   const openBooking = (booking: Booking) => {
+    void stopWebMeeting();
     setSelectedBookingId(booking.id);
+    setSelectedReportId(null);
     setEditDraft(makeEditDraft(booking));
     setPendingStatus(null);
     setPendingPaymentPaid(false);
     setNoteDraft("");
     setSaveFeedback("");
+    setCallFeedback("");
+    setCallJoinResult(null);
+    setCallState(null);
+    setCallLanguageCode("ko-KR");
+    setCallConnectionStatus("idle");
+    setCallConnectionError("");
+    setIsCallMuted(false);
+    setIsCallVideoEnabled(true);
+    setCallCaptions([]);
+    translatedCaptionIdsRef.current.clear();
   };
 
   const closeBooking = () => {
+    void stopWebMeeting();
     setSelectedBookingId(null);
+    setSelectedReportId(null);
     setPendingStatus(null);
     setPendingPaymentPaid(false);
     setNoteDraft("");
     setSaveFeedback("");
+    setCallFeedback("");
+    setCallJoinResult(null);
+    setCallState(null);
+    setCallLanguageCode("ko-KR");
+    setCallConnectionStatus("idle");
+    setCallConnectionError("");
+    setIsCallMuted(false);
+    setIsCallVideoEnabled(true);
+    setCallCaptions([]);
+    translatedCaptionIdsRef.current.clear();
     if (requestedBookingId) {
       const nextParams = new URLSearchParams(searchParams);
       nextParams.delete("bookingId");
+      nextParams.delete("call");
       setSearchParams(nextParams, { replace: true });
     }
   };
+
+  const handleTranscriptResults = useCallback(
+    (results: WebChimeTranscriptResult[]) => {
+      const bookingId = callJoinResult?.bookingId ?? selectedBookingId;
+      if (!bookingId) return;
+
+      setCallCaptions((current) => mergeTranscriptCaptions(current, results, callLanguageCode));
+
+      for (const result of results) {
+        const sourceLanguageCode = normalizeTranscriptLanguageCode(result.languageCode) ?? callLanguageCode;
+        const transcript = result.transcript.trim();
+        if (result.isPartial || !result.resultId || !transcript) continue;
+        if (translatedCaptionIdsRef.current.has(result.resultId)) continue;
+        translatedCaptionIdsRef.current.add(result.resultId);
+
+        void translateBookingCallCaption(
+          bookingId,
+          {
+            resultId: result.resultId,
+            sourceLanguageCode,
+            content: transcript,
+          },
+          user ?? undefined,
+        )
+          .then((translation) => {
+            setCallCaptions((current) => applyCaptionTranslation(current, translation));
+            captionSocketRef.current?.sendCaptionTranslation({
+              bookingId,
+              resultId: translation.resultId,
+              sourceLanguageCode: translation.sourceLanguageCode,
+              targetLanguageCode: translation.targetLanguageCode,
+              translatedContent: translation.translatedContent,
+            });
+          })
+          .catch((error: unknown) => {
+            const message = error instanceof Error ? error.message : "확정 자막 번역에 실패했습니다.";
+            setCallFeedback(message);
+          });
+      }
+    },
+    [callJoinResult?.bookingId, callLanguageCode, selectedBookingId, user],
+  );
+
+  useEffect(() => {
+    if (
+      !callJoinResult ||
+      chimeClientRef.current ||
+      !callAudioRef.current ||
+      !callLocalVideoRef.current ||
+      !callRemoteVideoRef.current
+    ) {
+      return;
+    }
+
+    void startWebChimeMeeting(callJoinResult, {
+      audioElement: callAudioRef.current,
+      localVideoElement: callLocalVideoRef.current,
+      remoteVideoElement: callRemoteVideoRef.current,
+      onStatusChange: (message: string) => {
+        setCallConnectionStatus(message);
+        setCallFeedback(message);
+      },
+      onTranscriptResults: handleTranscriptResults,
+      onTranscriptionStatus: (status) => {
+        if (status.type === "failed") {
+          setCallFeedback(status.message || "Chime 실시간 자막이 실패했습니다.");
+        }
+      },
+    }).then((controller) => {
+      chimeClientRef.current = controller;
+    }).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : "Chime 미팅 연결에 실패했습니다.";
+      setCallConnectionStatus("failed");
+      setCallConnectionError(message);
+      setCallFeedback(message);
+    });
+  }, [callJoinResult, handleTranscriptResults]);
+
+  useEffect(() => {
+    const bookingId = callJoinResult?.bookingId;
+    if (!bookingId) return;
+
+    const client = connectConsultingConversationSocket({
+      bookingId,
+      participantType: getRealtimeParticipantType(user),
+      authToken: getPartnerSessionToken(),
+      onEvent: (event: ConsultingServerSocketEvent) => {
+        if (event.type === "caption.translation") {
+          setCallCaptions((current) => applyCaptionTranslation(current, event));
+        }
+      },
+    });
+    captionSocketRef.current = client;
+
+    return () => {
+      client.close();
+      if (captionSocketRef.current === client) {
+        captionSocketRef.current = null;
+      }
+    };
+  }, [callJoinResult?.bookingId, user]);
+
+  useEffect(() => {
+    return () => {
+      void stopWebMeeting();
+    };
+  }, [stopWebMeeting]);
 
   const selectStatus = (nextStatus: BookingStatus) => {
     setPendingStatus((current) => (current === nextStatus ? null : nextStatus));
     setSaveFeedback("");
   };
 
+  const toggleCallMuted = () => {
+    const nextMuted = !isCallMuted;
+    chimeClientRef.current?.setMuted(nextMuted);
+    setIsCallMuted(nextMuted);
+  };
+
+  const toggleCallVideo = () => {
+    const nextEnabled = !isCallVideoEnabled;
+    setIsCallVideoEnabled(nextEnabled);
+    const updateVideo = chimeClientRef.current?.setLocalVideoEnabled(nextEnabled);
+    if (!updateVideo) return;
+    void updateVideo.catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : "카메라 상태를 바꾸지 못했습니다.";
+      setCallConnectionError(message);
+      setCallFeedback(message);
+      setIsCallVideoEnabled(!nextEnabled);
+    });
+  };
+
+  const buildPendingBookingChanges = (extra: BookingSaveChangesInput = {}) => {
+    if (!selectedDetail) return extra;
+    const changes: BookingSaveChangesInput = {};
+    if (hasEditDraftChanges(editDraft, selectedDetail.booking)) {
+      changes.patch = buildEditPatch(editDraft);
+    }
+    if (pendingStatus) changes.status = pendingStatus;
+    if (pendingPaymentPaid) changes.markPaymentPaid = true;
+    if (noteDraft.trim()) changes.note = noteDraft.trim();
+    if (pendingStatus === "cancelled") changes.cancelReason = "운영자 수동 취소";
+    return { ...changes, ...extra };
+  };
+
   const handleFlowAction = (actionKey: BookingFlowActionKey) => {
     setSaveFeedback("");
     if (!selectedDetail) return;
     if (actionKey === "contacting") {
-      selectStatus("contacting");
+      saveChangesMutation.mutate({ bookingId: selectedDetail.booking.id, changes: buildPendingBookingChanges({ status: "contacting" }) });
       return;
     }
     if (actionKey === "payment") {
-      setPendingPaymentPaid(true);
+      saveChangesMutation.mutate({ bookingId: selectedDetail.booking.id, changes: buildPendingBookingChanges({ markPaymentPaid: true }) });
       return;
     }
     if (actionKey === "confirm") {
-      selectStatus("confirmed");
+      saveChangesMutation.mutate({ bookingId: selectedDetail.booking.id, changes: buildPendingBookingChanges({ status: "confirmed" }) });
       return;
     }
     if (actionKey === "start") {
+      if (canJoinVideoCall(selectedDetail.booking)) {
+        joinCallMutation.mutate(selectedDetail.booking);
+        return;
+      }
       selectStatus("in_progress");
       return;
     }
     if (actionKey === "summary" && canOpenCompletion(selectedDetail.booking.status)) {
+      if (selectedDetail.booking.channel === "video") {
+        void endBookingCall(selectedDetail.booking.id, user ?? undefined);
+      }
       navigate(`/workspace/completion?bookingId=${selectedDetail.booking.id}`);
     }
   };
 
   const handleSaveChanges = () => {
     if (!selectedDetail) return;
-    const changes: BookingSaveChangesInput = {};
-    if (hasEditDraftChanges(editDraft, selectedDetail.booking)) {
-      changes.patch = buildEditPatch(editDraft);
-    }
-    if (pendingStatus) {
-      changes.status = pendingStatus;
-    }
-    if (pendingPaymentPaid) {
-      changes.markPaymentPaid = true;
-    }
-    if (noteDraft.trim()) {
-      changes.note = noteDraft.trim();
-    }
-    if (pendingStatus === "cancelled") {
-      changes.cancelReason = "운영자 수동 취소";
-    }
+    const changes = buildPendingBookingChanges();
     saveChangesMutation.mutate({ bookingId: selectedDetail.booking.id, changes });
   };
 
@@ -234,8 +489,17 @@ export function BookingsPage() {
     openBooking(requestedBooking);
   }, [bookings, requestedBookingId, selectedBookingId]);
 
+  useEffect(() => {
+    if (!requestedCall || !selectedDetail || callJoinResult || joinCallMutation.isPending) return;
+    if (autoJoinBookingIdRef.current === selectedDetail.booking.id) return;
+    if (!canJoinVideoCall(selectedDetail.booking)) return;
+    autoJoinBookingIdRef.current = selectedDetail.booking.id;
+    joinCallMutation.mutate(selectedDetail.booking);
+  }, [callJoinResult, joinCallMutation, requestedCall, selectedDetail]);
+
   if (bookingsQuery.isLoading) return <LoadingState label="예약 데이터를 불러오는 중입니다" />;
   if (bookingsQuery.isError) return <ErrorState message={bookingsQuery.error.message} onRetry={() => bookingsQuery.refetch()} />;
+  if (settingsQuery.isError) return <ErrorState message={settingsQuery.error.message} onRetry={() => settingsQuery.refetch()} />;
 
   return (
     <>
@@ -268,7 +532,7 @@ export function BookingsPage() {
           <div className="panel-header">
             <div>
               <h2>{currentLabel}</h2>
-              <p>앱 예약 기본 노출 시간은 10:00-20:00이며, 30분/1시간 화상 상담 슬롯을 기준으로 표시합니다.</p>
+              <p>설정에서 닫아둔 휴무일과 영업 외 시간은 캘린더에 같이 표시합니다.</p>
             </div>
             <div className="page-actions">
               <Button variant="secondary" onClick={() => setAnchorDate(addDays(anchorDate, view === "month" ? -30 : view === "week" ? -7 : -1))}>
@@ -279,8 +543,27 @@ export function BookingsPage() {
               </Button>
             </div>
           </div>
+          {scheduleSummary.length ? (
+            <div className="schedule-notice-list" aria-label="예약 운영 제한">
+              {scheduleSummary.map((item) => (
+                <div className="schedule-notice" key={`${item.dateKey}-${item.reason}`}>
+                  <Clock3 size={16} />
+                  <div>
+                    <strong>{item.label}</strong>
+                    <span>{item.reason}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
           <div className="panel-body">
-            <CalendarViewRenderer view={view} dates={visibleDates} bookings={bookings} onOpenBooking={openBooking} />
+            <CalendarViewRenderer
+              view={view}
+              dates={visibleDates}
+              bookings={bookings}
+              settings={settingsQuery.data}
+              onOpenBooking={openBooking}
+            />
           </div>
         </section>
 
@@ -372,9 +655,10 @@ export function BookingsPage() {
               <Button
                 variant="secondary"
                 icon={<Phone size={16} />}
-                onClick={() => createPhoneAction({ customerId: selectedDetail.customer.id, bookingId: selectedDetail.booking.id, channel: "phone" })}
+                onClick={() => joinCallMutation.mutate(selectedDetail.booking)}
+                disabled={!canJoinVideoCall(selectedDetail.booking) || joinCallMutation.isPending}
               >
-                전화 준비
+                {joinCallMutation.isPending ? "입장 준비 중" : "화상 입장"}
               </Button>
               {canOpenCompletion(selectedDetail.booking.status) ? (
                 <Button variant="primary" icon={<CheckCircle2 size={16} />} onClick={() => navigate(`/workspace/completion?bookingId=${selectedDetail.booking.id}`)}>
@@ -436,7 +720,13 @@ export function BookingsPage() {
                   <EmptyState title="선택된 리포트 없음" description="고객이 앱에서 룩톡/AI 분석/퍼스널컬러 리포트를 선택하면 여기에 표시됩니다." />
                 ) : (
                   selectedDetail.sharedReports.map((report) => (
-                    <AppReportCard key={report.id} report={report} />
+                    <AppReportCard
+                      compact
+                      key={report.id}
+                      onClick={() => setSelectedReportId(report.id)}
+                      report={report}
+                      selected={selectedReportId === report.id}
+                    />
                   ))
                 )}
               </div>
@@ -505,14 +795,14 @@ export function BookingsPage() {
             <section className="panel">
               <div className="panel-header">
                 <div>
-                  <h3>상태/메모 변경</h3>
-                  <p>선택한 변경사항은 저장 버튼을 누를 때 한 번에 반영됩니다.</p>
+                  <h3>예약 처리</h3>
+                  <p>초록색 버튼은 현재 예약에서 바로 해야 할 한 가지 작업입니다.</p>
                 </div>
               </div>
               <div className="panel-body settings-section">
                 <div className="workflow-action-panel">
                   <div className="workflow-current">
-                    <span>현재 단계</span>
+                    <span>현재 상태</span>
                     <strong>{getFlowStageLabel(previewBooking)}</strong>
                     <p>{getFlowStageDescription(previewBooking)}</p>
                   </div>
@@ -522,7 +812,7 @@ export function BookingsPage() {
                     if (!action) {
                       return (
                         <div className="workflow-next-card is-muted">
-                          <span>다음 처리</span>
+                          <span>처리 결과</span>
                           <strong>{previewBooking.status === "completed" ? "상담 완료" : "추가 처리 없음"}</strong>
                           <p>{previewBooking.status === "completed" ? "화상 상담과 AI 요약이 완료된 예약입니다." : "이미 종료된 예약은 상태 변경 대신 기록 확인만 진행합니다."}</p>
                         </div>
@@ -532,7 +822,7 @@ export function BookingsPage() {
                     return (
                       <div className="workflow-next-card">
                         <div>
-                          <span>다음 처리</span>
+                          <span>지금 할 일</span>
                           <strong>{action.label}</strong>
                           <p>{action.description}</p>
                         </div>
@@ -540,13 +830,117 @@ export function BookingsPage() {
                           variant={action.variant}
                           icon={getFlowActionIcon(action.key)}
                           onClick={() => handleFlowAction(action.key)}
-                          disabled={action.disabled}
+                          disabled={action.disabled || saveChangesMutation.isPending || (action.key === "start" && joinCallMutation.isPending)}
                         >
-                          {action.label}
+                          {saveChangesMutation.isPending
+                            ? "반영 중"
+                            : action.key === "start" && joinCallMutation.isPending
+                              ? "입장 준비 중"
+                              : action.label}
                         </Button>
                       </div>
                     );
                   })()}
+
+                  {selectedDetail.booking.channel === "video" ? (
+                    <div className="workflow-call-card">
+                      <span>화상 상담</span>
+                      <strong>{callJoinResult ? getCallConnectionLabel(callConnectionStatus) : "Chime 입장 전"}</strong>
+                      <p>
+                        {callConnectionError ||
+                          callFeedback ||
+                          "상담 시작을 누르면 예약 확정 여부와 입장 가능 시간을 확인한 뒤 Chime 미팅/참가자 정보를 발급합니다."}
+                      </p>
+                      <div className="workflow-call-language">
+                        <Field label="상담 언어">
+                          <SelectInput
+                            value={callLanguageCode}
+                            onChange={(event) => setCallLanguageCode(event.target.value as ConsultingCallLanguageCode)}
+                            disabled={Boolean(callJoinResult) || joinCallMutation.isPending}
+                          >
+                            <option value="ko-KR">한국어</option>
+                            <option value="en-US">English</option>
+                          </SelectInput>
+                        </Field>
+                        {callTranscription ? (
+                          <span className="tag">{getCallTranscriptionLabel(callTranscription.status, callTranscription.mode)}</span>
+                        ) : null}
+                      </div>
+                      {callJoinResult ? (
+                        <>
+                          <div className="workflow-call-stage">
+                            <div className="workflow-call-video is-remote">
+                              <video ref={callRemoteVideoRef} playsInline autoPlay />
+                              <span>고객 영상 대기 중</span>
+                            </div>
+                            <div className="workflow-call-video is-local">
+                              <video ref={callLocalVideoRef} playsInline autoPlay muted />
+                              <span>{isCallVideoEnabled ? "내 화면" : "카메라 꺼짐"}</span>
+                            </div>
+                            {callCaptions.length ? (
+                              <div className="workflow-call-captions" aria-live="polite">
+                                {callCaptions.slice(-4).map((caption) => (
+                                  <div className={`workflow-call-caption ${caption.isPartial ? "is-partial" : ""}`} key={caption.id}>
+                                    <span>{caption.speakerLabel}</span>
+                                    <strong>{caption.transcript}</strong>
+                                    {caption.translatedContent ? <em>{caption.translatedContent}</em> : null}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+                            <audio ref={callAudioRef} autoPlay />
+                          </div>
+                          <div className="workflow-call-controls">
+                            <Button variant="secondary" icon={isCallMuted ? <MicOff size={16} /> : <Mic size={16} />} onClick={toggleCallMuted}>
+                              {isCallMuted ? "마이크 켜기" : "마이크 끄기"}
+                            </Button>
+                            <Button variant="secondary" icon={isCallVideoEnabled ? <Video size={16} /> : <VideoOff size={16} />} onClick={toggleCallVideo}>
+                              {isCallVideoEnabled ? "카메라 끄기" : "카메라 켜기"}
+                            </Button>
+                            {callTranscription?.enabled ? (
+                              callTranscription.status === "active" || callTranscription.status === "starting" ? (
+                                <Button
+                                  variant="secondary"
+                                  onClick={() => stopTranscriptionMutation.mutate(selectedDetail.booking)}
+                                  disabled={stopTranscriptionMutation.isPending || callTranscription.status === "starting"}
+                                >
+                                  {stopTranscriptionMutation.isPending ? "자막 중지 중" : "자막 중지"}
+                                </Button>
+                              ) : (
+                                <Button
+                                  variant="secondary"
+                                  onClick={() => {
+                                    const accepted = window.confirm(
+                                      "고객과 상담사가 실시간 음성 인식 및 번역 자막 사용에 동의했나요?",
+                                    );
+                                    if (accepted) {
+                                      startTranscriptionMutation.mutate({
+                                        booking: selectedDetail.booking,
+                                        transcriptionConsentAccepted: true,
+                                      });
+                                    }
+                                  }}
+                                  disabled={startTranscriptionMutation.isPending || callTranscription.status === "stopping"}
+                                >
+                                  {startTranscriptionMutation.isPending ? "자막 시작 중" : "자막 시작"}
+                                </Button>
+                              )
+                            ) : null}
+                          </div>
+                          <small>세션 {callJoinResult.callSessionId.slice(0, 8)}</small>
+                        </>
+                      ) : canJoinVideoCall(selectedDetail.booking) ? (
+                        <Button
+                          variant="secondary"
+                          icon={<Video size={16} />}
+                          onClick={() => joinCallMutation.mutate(selectedDetail.booking)}
+                          disabled={joinCallMutation.isPending}
+                        >
+                          {joinCallMutation.isPending ? "입장 준비 중" : "Chime 입장"}
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
 
                   <div className="workflow-status-grid">
                     <div>
@@ -581,7 +975,7 @@ export function BookingsPage() {
                   />
                 </Field>
                 <div className={`save-status ${hasPendingChanges ? "is-pending" : ""}`}>
-                  {hasPendingChanges ? "저장 전 변경사항이 있습니다. 변경사항 저장을 누르면 한 번에 업로드됩니다." : "저장된 예약 정보와 동일합니다."}
+                  {hasPendingChanges ? "예약 정보, 메모 또는 예외 처리가 아직 저장되지 않았습니다." : "모든 변경사항이 저장되어 있습니다."}
                 </div>
                 {saveFeedback ? <div className="form-success">{saveFeedback}</div> : null}
                 {saveChangesMutation.isError ? <div className="form-error">{saveChangesMutation.error.message}</div> : null}
@@ -598,19 +992,101 @@ export function BookingsPage() {
           </div>
         ) : null}
       </Drawer>
+
+      <Modal
+        bodyClassName="report-viewer-body"
+        className="report-viewer-modal"
+        open={Boolean(selectedReportId)}
+        title={selectedReport?.title ?? "리포트 상세"}
+        onClose={() => setSelectedReportId(null)}
+        footer={
+          <Button variant="primary" onClick={() => setSelectedReportId(null)}>
+            확인
+          </Button>
+        }
+      >
+        {selectedReport ? <AppReportCard className="report-modal-card" report={selectedReport} /> : null}
+      </Modal>
     </>
   );
+}
+
+function mergeTranscriptCaptions(
+  current: CallCaptionViewModel[],
+  results: WebChimeTranscriptResult[],
+  fallbackLanguageCode: ConsultingCallLanguageCode,
+) {
+  const next = [...current];
+  for (const result of results) {
+    const transcript = result.transcript.trim();
+    if (!result.resultId || !transcript) continue;
+
+    const caption: CallCaptionViewModel = {
+      id: result.resultId,
+      isPartial: result.isPartial,
+      resultId: result.resultId,
+      sourceLanguageCode: normalizeTranscriptLanguageCode(result.languageCode) ?? fallbackLanguageCode,
+      speakerLabel: getCaptionSpeakerLabel(result.speakerExternalUserId),
+      transcript,
+    };
+    const existingIndex = next.findIndex((item) => item.resultId === caption.resultId);
+    if (existingIndex >= 0) {
+      next[existingIndex] = {
+        ...next[existingIndex],
+        ...caption,
+        targetLanguageCode: next[existingIndex].targetLanguageCode,
+        translatedContent: next[existingIndex].translatedContent,
+      };
+    } else {
+      next.push(caption);
+    }
+  }
+  return next.slice(-16);
+}
+
+function applyCaptionTranslation<T extends ConsultingCaptionTranslation>(
+  current: CallCaptionViewModel[],
+  translation: T,
+) {
+  return current.map((caption) =>
+    caption.resultId === translation.resultId
+      ? {
+          ...caption,
+          sourceLanguageCode: translation.sourceLanguageCode,
+          targetLanguageCode: translation.targetLanguageCode,
+          translatedContent: translation.translatedContent,
+        }
+      : caption,
+  );
+}
+
+function normalizeTranscriptLanguageCode(value?: string): ConsultingCallLanguageCode | null {
+  if (value === "ko-KR" || value?.toLowerCase().startsWith("ko")) return "ko-KR";
+  if (value === "en-US" || value?.toLowerCase().startsWith("en")) return "en-US";
+  return null;
+}
+
+function getCaptionSpeakerLabel(externalUserId?: string) {
+  if (externalUserId?.startsWith("customer:")) return "고객";
+  if (externalUserId?.startsWith("partner:")) return "상담사";
+  return "참가자";
+}
+
+function getRealtimeParticipantType(user: { role?: string } | null): ConsultingParticipantType {
+  return user?.role === "admin" || user?.role === "operator" ? "operator" : "expert";
 }
 
 function CalendarViewRenderer({
   bookings,
   dates,
   onOpenBooking,
+  settings,
   view,
 }: {
   view: CalendarView;
   dates: Date[];
   bookings: Booking[];
+  settings?: ManagerSettings;
   onOpenBooking: (booking: Booking) => void;
 }) {
   if (view === "month") {
@@ -621,9 +1097,13 @@ function CalendarViewRenderer({
         ))}
         {dates.map((date) => {
           const dateBookings = bookingsForDate(bookings, date);
+          const dateStatus = getDateOperatingStatus(date, settings);
           return (
-            <div className="calendar-cell" key={date.toISOString()}>
-              <span className="calendar-date">{date.getDate()}</span>
+            <div className={`calendar-cell ${dateStatus.isClosed ? "is-closed" : ""}`} key={date.toISOString()}>
+              <div className="calendar-date-row">
+                <span className="calendar-date">{date.getDate()}</span>
+                {dateStatus.isClosed ? <span className="closed-badge">{dateStatus.reason}</span> : null}
+              </div>
               {dateBookings.slice(0, 4).map((booking) => (
                 <BookingPill booking={booking} key={booking.id} onClick={() => onOpenBooking(booking)} />
               ))}
@@ -637,17 +1117,22 @@ function CalendarViewRenderer({
 
   return (
     <div className={`calendar-grid ${view}`}>
-      <div className="calendar-head">시간</div>
+      <div className="calendar-head time-head">시간</div>
       {dates.map((date) => (
-        <div className="calendar-head" key={date.toISOString()}>{formatDate(date.toISOString())}</div>
+        <div className="calendar-head day-head" key={date.toISOString()}>
+          <strong>{formatDate(date.toISOString())}</strong>
+          <span>{getDateOperatingSummary(date, settings)}</span>
+        </div>
       ))}
       {slotTimes.map((time) => (
         <Fragment key={time}>
           <div className="time-cell" key={`${time}-label`}>{time}</div>
           {dates.map((date) => {
             const slotBookings = bookingsForDate(bookings, date).filter((booking) => getLocalTimeKey(booking.startsAt) === time);
+            const closedReason = getSlotClosedReason(date, time, settings);
             return (
-              <div className="slot-cell" key={`${date.toISOString()}-${time}`}>
+              <div className={`slot-cell ${closedReason ? "is-closed" : ""}`} key={`${date.toISOString()}-${time}`}>
+                {closedReason ? <span className="slot-closed-label">{closedReason}</span> : null}
                 {slotBookings.map((booking) => (
                   <BookingPill booking={booking} key={booking.id} onClick={() => onOpenBooking(booking)} />
                 ))}
@@ -660,11 +1145,141 @@ function CalendarViewRenderer({
   );
 }
 
+function buildVisibleScheduleSummary(dates: Date[], settings?: ManagerSettings): ScheduleNotice[] {
+  if (!settings) return [];
+  const visibleDateKeys = new Set(dates.map((date) => getLocalDateKey(date)));
+  const visibleOperatingDays = new Set(dates.map(getOperatingDayOfWeek));
+  const notices: ScheduleNotice[] = [];
+
+  notices.push({
+    dateKey: "booking-open-days",
+    label: "예약 오픈",
+    reason: `오늘부터 ${settings.bookingOpenMonths ?? 1}개월`,
+  });
+
+  const holidays = (settings.holidays ?? []).filter((dateKey) => visibleDateKeys.has(dateKey));
+  if (holidays.length) {
+    notices.push({
+      dateKey: "holidays",
+      label: "휴무일",
+      reason: formatLimitedList(holidays, 4),
+    });
+  }
+
+  const closedDays = (settings.operatingHours ?? [])
+    .filter((hour) => visibleOperatingDays.has(hour.dayOfWeek) && hour.isClosed)
+    .map((hour) => hour.label);
+  if (closedDays.length) {
+    notices.push({
+      dateKey: "closed-days",
+      label: "휴무 요일",
+      reason: closedDays.join(", "),
+    });
+  }
+
+  const lunchHours = (settings.operatingHours ?? [])
+    .filter((hour) => visibleOperatingDays.has(hour.dayOfWeek) && !hour.isClosed && hour.lunchStart && hour.lunchEnd)
+    .map((hour) => `${hour.label} ${hour.lunchStart}-${hour.lunchEnd}`);
+  if (lunchHours.length) {
+    notices.push({
+      dateKey: "lunch-hours",
+      label: "점심 차단",
+      reason: formatLimitedList(lunchHours, 3),
+    });
+  }
+
+  return notices;
+}
+
+function getDateOperatingStatus(date: Date, settings?: ManagerSettings) {
+  const windowReason = getBookingWindowClosedReason(date, settings);
+  if (windowReason) {
+    return { isClosed: true, reason: windowReason };
+  }
+  const dateKey = getLocalDateKey(date);
+  if (settings?.holidays?.includes(dateKey)) {
+    return { isClosed: true, reason: "휴무일" };
+  }
+  const hour = getOperatingHourForDate(date, settings);
+  if (hour?.isClosed) {
+    return { isClosed: true, reason: "휴무" };
+  }
+  return { isClosed: false, reason: "" };
+}
+
+function getDateOperatingSummary(date: Date, settings?: ManagerSettings) {
+  const dateStatus = getDateOperatingStatus(date, settings);
+  if (dateStatus.isClosed) return dateStatus.reason;
+  const hour = getOperatingHourForDate(date, settings);
+  if (!hour) return "운영 설정 없음";
+  const lunch = hour.lunchStart && hour.lunchEnd ? ` · 점심 ${hour.lunchStart}-${hour.lunchEnd}` : "";
+  return `${hour.opensAt}-${hour.closesAt}${lunch}`;
+}
+
+function getSlotClosedReason(date: Date, time: string, settings?: ManagerSettings) {
+  const dateStatus = getDateOperatingStatus(date, settings);
+  if (dateStatus.isClosed) return dateStatus.reason;
+  const hour = getOperatingHourForDate(date, settings);
+  if (!hour) return "";
+  if (time < hour.opensAt) return "영업 전";
+  if (time >= hour.closesAt) return "마감";
+  if (hour.lunchStart && hour.lunchEnd && time >= hour.lunchStart && time < hour.lunchEnd) return "점심";
+  return "";
+}
+
+function getBookingWindowClosedReason(date: Date, settings?: ManagerSettings) {
+  if (!settings?.bookingOpenMonths) return "";
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const targetDate = new Date(date);
+  targetDate.setHours(0, 0, 0, 0);
+  const openUntil = addCalendarMonths(today, settings.bookingOpenMonths);
+  openUntil.setHours(0, 0, 0, 0);
+  if (targetDate > openUntil) return "미오픈";
+  return "";
+}
+
+function addCalendarMonths(date: Date, months: number) {
+  const result = new Date(date);
+  const originalDay = result.getDate();
+  result.setDate(1);
+  result.setMonth(result.getMonth() + months);
+  const lastDayOfTargetMonth = new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate();
+  result.setDate(Math.min(originalDay, lastDayOfTargetMonth));
+  return result;
+}
+
+function getOperatingHourForDate(date: Date, settings?: ManagerSettings): OperatingHours | undefined {
+  const dayOfWeek = getOperatingDayOfWeek(date);
+  return settings?.operatingHours?.find((hour) => hour.dayOfWeek === dayOfWeek);
+}
+
+function getOperatingDayOfWeek(date: Date) {
+  return (date.getDay() + 6) % 7;
+}
+
+function getLocalDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatLimitedList(values: string[], limit: number) {
+  const visible = values.slice(0, limit).join(", ");
+  const hiddenCount = values.length - limit;
+  return hiddenCount > 0 ? `${visible} 외 ${hiddenCount}건` : visible;
+}
+
 function BookingPill({ booking, onClick }: { booking: Booking; onClick: () => void }) {
   return (
     <button type="button" className={`booking-pill ${booking.status}`} onClick={onClick}>
-      <strong>{formatTime(booking.startsAt)} {getCustomerName(booking.customerId)}</strong>
-      <span>{booking.type} · 리포트 {booking.sharedReportIds.length}개</span>
+      <strong>
+        <span>{formatTime(booking.startsAt)}</span>
+        <span>{getCustomerName(booking.customerId)}</span>
+      </strong>
+      <small>{booking.type}</small>
+      <span>리포트 {booking.sharedReportIds.length}개</span>
     </button>
   );
 }
@@ -807,6 +1422,28 @@ function getFlowActionIcon(actionKey: BookingFlowActionKey) {
   if (actionKey === "confirm" || actionKey === "summary") return <CheckCircle2 size={16} />;
   if (actionKey === "start") return <Video size={16} />;
   return <Clock3 size={16} />;
+}
+
+function getCallConnectionLabel(status: string) {
+  if (status === "connecting") return "Chime 연결 중";
+  if (status === "failed") return "연결 실패";
+  if (status === "stopped") return "통화 종료됨";
+  if (status.includes("시작")) return "화상 상담 연결됨";
+  if (status.includes("종료")) return "통화 종료됨";
+  return "Chime 입장 준비 완료";
+}
+
+function getCallTranscriptionLabel(status: string, mode: string) {
+  if (status === "disabled") return "자막 꺼짐";
+  if (status === "starting") return "자막 시작 중";
+  if (status === "active") return mode === "identify" ? "자막 켜짐 · 한/영 자동" : "자막 켜짐";
+  if (status === "stopping") return "자막 중지 중";
+  if (status === "failed") return "자막 오류";
+  return "자막 대기";
+}
+
+function canJoinVideoCall(booking: Booking) {
+  return booking.channel === "video" && ["confirmed", "scheduled", "in_progress"].includes(booking.status);
 }
 
 function canUseExceptionActions(status: BookingStatus) {

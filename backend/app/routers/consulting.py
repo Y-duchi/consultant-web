@@ -14,13 +14,15 @@ router = APIRouter()
 
 _connections: dict[str, set[WebSocket]] = defaultdict(set)
 _messages: dict[str, list[dict[str, object]]] = defaultdict(list)
+_caption_source_languages = {"ko-KR", "en-US"}
+_caption_target_languages = {"ko", "en"}
 
 
 def _now_iso() -> str:
   return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _message_from_payload(booking_id: str, payload: object, participant_type: str) -> dict[str, object] | None:
+def _event_from_payload(booking_id: str, payload: object, participant_type: str) -> dict[str, object] | None:
   if isinstance(payload, str):
     body = payload.strip()
     client_message_id = None
@@ -29,6 +31,8 @@ def _message_from_payload(booking_id: str, payload: object, participant_type: st
     event_type = payload.get("type")
     if event_type == "ping":
       return {"type": "pong", "at": _now_iso()}
+    if event_type == "caption.translation":
+      return _caption_translation_from_payload(booking_id, payload)
     if event_type not in {None, "message.send"}:
       return None
 
@@ -54,6 +58,29 @@ def _message_from_payload(booking_id: str, payload: object, participant_type: st
     "senderType": participant_type,
     "senderName": sender_name,
     "sentAt": _now_iso(),
+  }
+
+
+def _caption_translation_from_payload(booking_id: str, payload: dict[str, object]) -> dict[str, object] | None:
+  result_id = str(payload.get("resultId") or "").strip()
+  source_language_code = str(payload.get("sourceLanguageCode") or "").strip()
+  target_language_code = str(payload.get("targetLanguageCode") or "").strip()
+  translated_content = str(payload.get("translatedContent") or "").strip()
+
+  if not result_id or not translated_content:
+    return None
+  if source_language_code not in _caption_source_languages:
+    return None
+  if target_language_code not in _caption_target_languages:
+    return None
+
+  return {
+    "type": "caption.translation",
+    "bookingId": booking_id,
+    "resultId": result_id,
+    "sourceLanguageCode": source_language_code,
+    "targetLanguageCode": target_language_code,
+    "translatedContent": translated_content,
   }
 
 
@@ -110,23 +137,24 @@ async def consulting_conversation_ws(
         payload = json.loads(raw_payload)
       except json.JSONDecodeError:
         payload = raw_payload
-      event = _message_from_payload(booking_id, payload, participantType)
+      event = _event_from_payload(booking_id, payload, participantType)
       if not event:
         continue
       if event.get("type") == "pong":
         await websocket.send_json(event)
         continue
 
-      _messages[booking_id].append(event)
-      client_message_id = event.get("clientMessageId")
-      if client_message_id:
-        await websocket.send_json({
-          "type": "message.ack",
-          "bookingId": booking_id,
-          "clientMessageId": client_message_id,
-          "messageId": event["id"],
-          "sentAt": event["sentAt"],
-        })
+      if event.get("type") == "message.new":
+        _messages[booking_id].append(event)
+        client_message_id = event.get("clientMessageId")
+        if client_message_id:
+          await websocket.send_json({
+            "type": "message.ack",
+            "bookingId": booking_id,
+            "clientMessageId": client_message_id,
+            "messageId": event["id"],
+            "sentAt": event["sentAt"],
+          })
       await _broadcast(booking_id, event)
   except WebSocketDisconnect:
     _connections[booking_id].discard(websocket)

@@ -24,7 +24,7 @@ import {
   partnerApplicationStatusLabel,
   workspaceScopeLabel,
 } from "../../shared/utils/format";
-import type { PartnerApplication, PartnerApplicationStatus, PartnerAccount, PartnerBusinessMember } from "../../types/domain";
+import type { ConsultingMode, PartnerApplication, PartnerApplicationStatus, PartnerAccount, PartnerBusinessMember } from "../../types/domain";
 
 const statusOptions: Array<PartnerApplicationStatus | "all"> = ["all", "submitted", "needs_update", "approved", "rejected"];
 
@@ -157,6 +157,7 @@ export function ApplicationsPage() {
               <th>상태</th>
               <th>대표자</th>
               <th>전문 분야</th>
+              <th>상담 방식</th>
               <th>가격</th>
               <th>제출 서류</th>
               <th>최근 변경</th>
@@ -166,7 +167,7 @@ export function ApplicationsPage() {
           <tbody>
             {applications.length === 0 ? (
               <tr>
-                <td colSpan={8}>
+                <td colSpan={9}>
                   <EmptyState title="신청 내역이 없습니다" description="상태 필터나 검색어를 조정해보세요." />
                 </td>
               </tr>
@@ -196,8 +197,24 @@ export function ApplicationsPage() {
                   </td>
                   <td>
                     <div className="cell-main">
-                      <strong>{formatCurrency(application.price30Min)}</strong>
-                      <span>60분 {formatCurrency(application.price60Min)}</span>
+                      <div className="tag-list">
+                        {getApplicationConsultingModes(application).map((mode) => (
+                          <span className="tag" key={mode}>
+                            {consultingModeLabel(mode)}
+                          </span>
+                        ))}
+                      </div>
+                      {hasConsultingMode(application, "offline") && application.offlineAddress ? (
+                        <span>{application.offlineAddress}</span>
+                      ) : null}
+                    </div>
+                  </td>
+                  <td>
+                    <div className="cell-main">
+                      <strong>{formatApplicationPrice(application, getPrimaryConsultingMode(application))}</strong>
+                      {hasConsultingMode(application, "online") && hasConsultingMode(application, "offline") ? (
+                        <span>오프라인 {formatApplicationPrice(application, "offline")}</span>
+                      ) : null}
                     </div>
                   </td>
                   <td>{application.documents.length}개</td>
@@ -267,6 +284,26 @@ export function ApplicationsPage() {
                 <DetailRow label="연락처">{selectedApplication.phone}</DetailRow>
                 <DetailRow label="전문 분야">{selectedApplication.specialties.join(", ")}</DetailRow>
                 <DetailRow label="카테고리">{selectedApplication.categories.join(", ")}</DetailRow>
+                <DetailRow label="상담 방식">
+                  <div className="tag-list">
+                    {getApplicationConsultingModes(selectedApplication).map((mode) => (
+                      <span className="tag" key={mode}>
+                        {consultingModeLabel(mode)}
+                      </span>
+                    ))}
+                  </div>
+                </DetailRow>
+                {hasConsultingMode(selectedApplication, "online") ? (
+                  <DetailRow label="온라인 가격">{formatApplicationPrice(selectedApplication, "online")}</DetailRow>
+                ) : null}
+                {hasConsultingMode(selectedApplication, "offline") ? (
+                  <>
+                    <DetailRow label="오프라인 가격">{formatApplicationPrice(selectedApplication, "offline")}</DetailRow>
+                    <DetailRow label="오프라인 주소">{selectedApplication.offlineAddress || "미입력"}</DetailRow>
+                    <DetailRow label="상세 주소">{selectedApplication.offlineDetailAddress || "미입력"}</DetailRow>
+                    <DetailRow label="위치/방문 안내">{selectedApplication.offlineLocationNote || "미입력"}</DetailRow>
+                  </>
+                ) : null}
                 <DetailRow label="소개">{selectedApplication.introduction}</DetailRow>
               </dl>
             </section>
@@ -346,6 +383,31 @@ function DetailRow({ children, label }: { children: ReactNode; label: string }) 
       <dd>{children}</dd>
     </div>
   );
+}
+
+function getApplicationConsultingModes(application: PartnerApplication): ConsultingMode[] {
+  return application.consultingModes?.length ? application.consultingModes : ["online"];
+}
+
+function getPrimaryConsultingMode(application: PartnerApplication): ConsultingMode {
+  const modes = getApplicationConsultingModes(application);
+  return modes.includes("online") ? "online" : modes[0];
+}
+
+function hasConsultingMode(application: PartnerApplication, mode: ConsultingMode) {
+  return getApplicationConsultingModes(application).includes(mode);
+}
+
+function consultingModeLabel(mode: ConsultingMode) {
+  return mode === "offline" ? "오프라인" : "온라인";
+}
+
+function formatApplicationPrice(application: PartnerApplication, mode: ConsultingMode) {
+  const price30Min =
+    mode === "offline" ? application.offlinePrice30Min ?? application.price30Min : application.onlinePrice30Min ?? application.price30Min;
+  const price60Min =
+    mode === "offline" ? application.offlinePrice60Min ?? application.price60Min : application.onlinePrice60Min ?? application.price60Min;
+  return `30분 ${formatCurrency(price30Min)} · 60분 ${formatCurrency(price60Min)}`;
 }
 
 function GeneratedAccountPanel({ account, member }: { account: PartnerAccount; member?: PartnerBusinessMember | null }) {

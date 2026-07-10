@@ -1,9 +1,8 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BellRing, FileImage, Phone, Search, Send } from "lucide-react";
 import {
-  createPhoneAction,
   getChatThreadDetail,
   getChatThreads,
   getPartnerSessionToken,
@@ -30,6 +29,7 @@ import { AppReportCard } from "../reports/AppReportCard";
 
 export function ChatPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -306,7 +306,12 @@ export function ChatPage() {
                     <span>{detail.customer.phone} · 담당 {detail.expert.name} · {getSocketStatusLabel(socketStatus)}</span>
                   </div>
                 </div>
-                <Button variant="secondary" icon={<Phone size={16} />} onClick={() => createPhoneAction({ customerId: detail.customer.id, bookingId: detail.booking?.id, channel: "phone" })}>
+                <Button
+                  variant="secondary"
+                  icon={<Phone size={16} />}
+                  onClick={() => detail.booking && navigate(`/workspace/bookings?bookingId=${detail.booking.id}&call=1`)}
+                  disabled={!detail.booking}
+                >
                   전화
                 </Button>
               </>

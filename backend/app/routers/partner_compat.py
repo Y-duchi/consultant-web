@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 
-from app.services import real_workspace
+from app.services import partner_call, real_workspace
 from app.services.auth import PartnerPrincipal
 
 
@@ -46,7 +46,19 @@ async def business_profile(principal: PartnerPrincipal = Depends(get_compat_prin
   business = next((item for item in await real_workspace.list_businesses() if item["id"] == principal.business_id), None)
   if business is None:
     raise HTTPException(status_code=404, detail="Business not found.")
+  settings = await real_workspace.get_partner_settings(principal)
+  business["default_operating_hours"] = settings["operating_hours"]
   return ok({"business": business})
+
+
+@router.get("/settings")
+async def settings(principal: PartnerPrincipal = Depends(get_compat_principal)):
+  return ok({"settings": await real_workspace.get_partner_settings(principal)})
+
+
+@router.patch("/settings")
+async def update_settings(payload: dict, principal: PartnerPrincipal = Depends(get_compat_principal)):
+  return ok({"settings": await real_workspace.update_partner_settings(payload, principal)})
 
 
 @router.get("/bookings")
@@ -89,6 +101,56 @@ async def save_booking_changes(booking_id: str, payload: dict, principal: Partne
 async def update_booking_status(booking_id: str, payload: dict, principal: PartnerPrincipal = Depends(get_compat_principal)):
   booking = await real_workspace.update_partner_booking_status(booking_id, str(payload.get("status") or ""), principal)
   return ok({"booking": booking})
+
+
+@router.get("/bookings/{booking_id}/call")
+async def get_booking_call_state(booking_id: str, principal: PartnerPrincipal = Depends(get_compat_principal)):
+  return ok({"call": await partner_call.get_call_state(booking_id, principal)})
+
+
+@router.post("/bookings/{booking_id}/call/join")
+async def join_booking_call(booking_id: str, payload: dict, principal: PartnerPrincipal = Depends(get_compat_principal)):
+  language_code = payload.get("languageCode") or payload.get("language_code")
+  return ok({"call": await partner_call.join_call(booking_id, principal, language_code)})
+
+
+@router.post("/bookings/{booking_id}/call/end")
+async def end_booking_call(booking_id: str, principal: PartnerPrincipal = Depends(get_compat_principal)):
+  return ok({"call": await partner_call.end_call(booking_id, principal)})
+
+
+@router.post("/bookings/{booking_id}/call/transcription/start")
+async def start_booking_call_transcription(booking_id: str, payload: dict, principal: PartnerPrincipal = Depends(get_compat_principal)):
+  language_code = payload.get("languageCode") or payload.get("language_code")
+  consent_accepted = bool(payload.get("transcriptionConsentAccepted") or payload.get("transcription_consent_accepted"))
+  if not consent_accepted:
+    raise HTTPException(status_code=400, detail="Transcription consent confirmation is required.")
+  return ok({
+    "call": await partner_call.start_transcription(
+      booking_id,
+      principal,
+      language_code,
+      transcription_consent_accepted=consent_accepted,
+    )
+  })
+
+
+@router.post("/bookings/{booking_id}/call/transcription/stop")
+async def stop_booking_call_transcription(booking_id: str, principal: PartnerPrincipal = Depends(get_compat_principal)):
+  return ok({"call": await partner_call.stop_transcription(booking_id, principal)})
+
+
+@router.post("/bookings/{booking_id}/call/captions/translate")
+async def translate_booking_call_caption(booking_id: str, payload: dict, principal: PartnerPrincipal = Depends(get_compat_principal)):
+  return ok(
+    await partner_call.translate_caption(
+      booking_id,
+      principal,
+      result_id=str(payload.get("resultId") or payload.get("result_id") or ""),
+      source_language_code=str(payload.get("sourceLanguageCode") or payload.get("source_language_code") or ""),
+      content=str(payload.get("content") or ""),
+    ),
+  )
 
 
 @router.post("/bookings/{booking_id}/payment")

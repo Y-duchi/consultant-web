@@ -1,12 +1,12 @@
 import { useMemo, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, FileCheck2, Send, ShieldCheck } from "lucide-react";
+import { ArrowLeft, FileCheck2, MapPin, Send, ShieldCheck, Video } from "lucide-react";
 import { submitPartnerApplication } from "../../services/api";
 import { PartnerApplicationStatusBadge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Field, SelectInput, TextArea, TextInput } from "../../shared/ui/Field";
-import type { PartnerApplication, PartnerType } from "../../types/domain";
+import type { ConsultingMode, PartnerApplication, PartnerType } from "../../types/domain";
 
 const toList = (value: string) =>
   value
@@ -24,21 +24,31 @@ export function ApplyPage() {
   const [specialties, setSpecialties] = useState("메이크업, 퍼스널컬러, 웨딩");
   const [categories, setCategories] = useState("퍼스널컬러, 메이크업");
   const [introduction, setIntroduction] = useState("앱 AI 리포트를 함께 보며 바로 따라 할 수 있는 메이크업 처방을 제공합니다.");
-  const [price30Min, setPrice30Min] = useState(19000);
-  const [price60Min, setPrice60Min] = useState(34000);
+  const [consultingModes, setConsultingModes] = useState<ConsultingMode[]>(["online"]);
+  const [onlinePrice30Min, setOnlinePrice30Min] = useState(19000);
+  const [onlinePrice60Min, setOnlinePrice60Min] = useState(34000);
+  const [offlinePrice30Min, setOfflinePrice30Min] = useState(29000);
+  const [offlinePrice60Min, setOfflinePrice60Min] = useState(49000);
+  const [offlineAddress, setOfflineAddress] = useState("서울 성동구 연무장길 8");
+  const [offlineDetailAddress, setOfflineDetailAddress] = useState("3층 AURA 상담룸");
+  const [offlineLocationNote, setOfflineLocationNote] = useState("성수역 3번 출구 도보 4분, 건물 뒤편 유료 주차 가능");
   const [businessRegistrationFileName, setBusinessRegistrationFileName] = useState("AURA성수_사업자등록증.pdf");
   const [beautyLicenseFileName, setBeautyLicenseFileName] = useState("김세아_국가미용사면허증.pdf");
   const [additionalCertificateFileNames, setAdditionalCertificateFileNames] = useState<string[]>(["퍼스널컬러컨설턴트1급.pdf"]);
   const [isSubmitting, setSubmitting] = useState(false);
   const [submittedApplication, setSubmittedApplication] = useState<PartnerApplication | null>(null);
+  const hasOnlineConsulting = consultingModes.includes("online");
+  const hasOfflineConsulting = consultingModes.includes("offline");
 
   const requiredDocumentsReady = useMemo(
     () => Boolean(businessRegistrationFileName && beautyLicenseFileName),
     [beautyLicenseFileName, businessRegistrationFileName],
   );
+  const canSubmit = requiredDocumentsReady && consultingModes.length > 0 && (!hasOfflineConsulting || offlineAddress.trim().length > 0);
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
+    if (!canSubmit) return;
     setSubmitting(true);
     try {
       const application = await submitPartnerApplication({
@@ -51,8 +61,16 @@ export function ApplyPage() {
         specialties: toList(specialties),
         categories: toList(categories),
         introduction,
-        price30Min,
-        price60Min,
+        consultingModes,
+        price30Min: hasOnlineConsulting ? onlinePrice30Min : offlinePrice30Min,
+        price60Min: hasOnlineConsulting ? onlinePrice60Min : offlinePrice60Min,
+        onlinePrice30Min: hasOnlineConsulting ? onlinePrice30Min : undefined,
+        onlinePrice60Min: hasOnlineConsulting ? onlinePrice60Min : undefined,
+        offlinePrice30Min: hasOfflineConsulting ? offlinePrice30Min : undefined,
+        offlinePrice60Min: hasOfflineConsulting ? offlinePrice60Min : undefined,
+        offlineAddress: hasOfflineConsulting ? offlineAddress : undefined,
+        offlineDetailAddress: hasOfflineConsulting ? offlineDetailAddress : undefined,
+        offlineLocationNote: hasOfflineConsulting ? offlineLocationNote : undefined,
         businessRegistrationFileName,
         beautyLicenseFileName,
         additionalCertificateFileNames,
@@ -71,6 +89,12 @@ export function ApplyPage() {
     setAdditionalCertificateFileNames(Array.from(event.target.files ?? []).map((file) => file.name));
   };
 
+  const toggleConsultingMode = (mode: ConsultingMode) => {
+    setConsultingModes((current) =>
+      current.includes(mode) ? current.filter((item) => item !== mode) : [...current, mode],
+    );
+  };
+
   if (submittedApplication) {
     return (
       <main className="login-page">
@@ -84,6 +108,10 @@ export function ApplyPage() {
               <div>
                 <span>신청 상태</span>
                 <PartnerApplicationStatusBadge status={submittedApplication.status} />
+              </div>
+              <div>
+                <span>상담 방식</span>
+                <strong>{(submittedApplication.consultingModes ?? ["online"]).map(consultingModeLabel).join(" · ")}</strong>
               </div>
               <div>
                 <span>제출 서류</span>
@@ -159,12 +187,64 @@ export function ApplyPage() {
             <Field label="상담 가능 카테고리" hint="쉼표로 구분">
               <TextInput value={categories} onChange={(event) => setCategories(event.target.value)} />
             </Field>
-            <Field label="30분 상담 가격">
-              <TextInput type="number" value={price30Min} onChange={(event) => setPrice30Min(Number(event.target.value))} min={0} />
-            </Field>
-            <Field label="1시간 상담 가격">
-              <TextInput type="number" value={price60Min} onChange={(event) => setPrice60Min(Number(event.target.value))} min={0} />
-            </Field>
+            <div className="field span-2">
+              <span>상담 방식</span>
+              <div className="mode-option-grid">
+                <label className={`mode-option ${hasOnlineConsulting ? "selected" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={hasOnlineConsulting}
+                    onChange={() => toggleConsultingMode("online")}
+                  />
+                  <Video size={17} />
+                  <span>
+                    <strong>온라인</strong>
+                    <small>앱 영상 상담</small>
+                  </span>
+                </label>
+                <label className={`mode-option ${hasOfflineConsulting ? "selected" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={hasOfflineConsulting}
+                    onChange={() => toggleConsultingMode("offline")}
+                  />
+                  <MapPin size={17} />
+                  <span>
+                    <strong>오프라인</strong>
+                    <small>매장 방문 상담</small>
+                  </span>
+                </label>
+              </div>
+            </div>
+            {hasOnlineConsulting ? (
+              <>
+                <Field label="온라인 30분 가격">
+                  <TextInput type="number" value={onlinePrice30Min} onChange={(event) => setOnlinePrice30Min(Number(event.target.value))} min={0} />
+                </Field>
+                <Field label="온라인 1시간 가격">
+                  <TextInput type="number" value={onlinePrice60Min} onChange={(event) => setOnlinePrice60Min(Number(event.target.value))} min={0} />
+                </Field>
+              </>
+            ) : null}
+            {hasOfflineConsulting ? (
+              <>
+                <Field label="오프라인 30분 가격">
+                  <TextInput type="number" value={offlinePrice30Min} onChange={(event) => setOfflinePrice30Min(Number(event.target.value))} min={0} />
+                </Field>
+                <Field label="오프라인 1시간 가격">
+                  <TextInput type="number" value={offlinePrice60Min} onChange={(event) => setOfflinePrice60Min(Number(event.target.value))} min={0} />
+                </Field>
+                <Field label="오프라인 주소" hint="방문 상담을 제공하는 경우 필수">
+                  <TextInput value={offlineAddress} onChange={(event) => setOfflineAddress(event.target.value)} required={hasOfflineConsulting} />
+                </Field>
+                <Field label="상세 주소">
+                  <TextInput value={offlineDetailAddress} onChange={(event) => setOfflineDetailAddress(event.target.value)} />
+                </Field>
+                <Field label="위치/방문 안내" hint="역 출구, 주차, 출입 안내 등">
+                  <TextInput value={offlineLocationNote} onChange={(event) => setOfflineLocationNote(event.target.value)} />
+                </Field>
+              </>
+            ) : null}
             <Field label="소개 문구" hint="앱 전문가 상세에 노출될 수 있는 문장">
               <TextArea value={introduction} onChange={(event) => setIntroduction(event.target.value)} />
             </Field>
@@ -185,11 +265,15 @@ export function ApplyPage() {
             </Field>
           </div>
 
-          <Button type="submit" variant="primary" icon={<Send size={17} />} disabled={isSubmitting || !requiredDocumentsReady}>
+          <Button type="submit" variant="primary" icon={<Send size={17} />} disabled={isSubmitting || !canSubmit}>
             {isSubmitting ? "제출 중" : "입점 신청 제출"}
           </Button>
         </form>
       </section>
     </main>
   );
+}
+
+function consultingModeLabel(mode: ConsultingMode) {
+  return mode === "offline" ? "오프라인" : "온라인";
 }

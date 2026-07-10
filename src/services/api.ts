@@ -31,6 +31,14 @@ import type {
   UserRole,
   WorkspaceScope,
   PartnerType,
+  ConsultingMode,
+  ConsultingCaptionTranslation,
+  ConsultingCallJoinResult,
+  ConsultingCallLanguageCode,
+  ConsultingCallState,
+  ConsultingCallTranscription,
+  ConsultingCallTranscriptionMode,
+  ConsultingCallTranscriptionStatus,
 } from "../types/domain";
 
 const delay = (ms = 180) => new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -96,6 +104,25 @@ function getAdminApiBaseUrl() {
   const raw = import.meta.env.VITE_API_BASE_URL?.trim() || "http://127.0.0.1:8000";
   const trimmed = raw.replace(/\/+$/, "");
   return trimmed.endsWith("/api") ? `${trimmed}/admin` : `${trimmed}/api/admin`;
+}
+
+function getPartnerApplicationsApiBaseUrl() {
+  const explicit = import.meta.env.VITE_PARTNER_APPLICATIONS_API_BASE_URL?.trim();
+  if (explicit) {
+    return explicit.replace(/\/+$/, "");
+  }
+
+  if (
+    typeof window !== "undefined" &&
+    window.location.hostname !== "localhost" &&
+    window.location.hostname !== "127.0.0.1"
+  ) {
+    return "/api/partner-applications";
+  }
+
+  const raw = import.meta.env.VITE_API_BASE_URL?.trim() || "http://127.0.0.1:8000";
+  const trimmed = raw.replace(/\/+$/, "");
+  return trimmed.endsWith("/api") ? `${trimmed}/partner-applications` : `${trimmed}/api/partner-applications`;
 }
 
 function shouldUseAdminApi() {
@@ -176,6 +203,19 @@ async function requestAdminJson<T>(path: string, init: RequestInit = {}): Promis
   return unwrapApiEnvelope<T>(payload);
 }
 
+async function requestPartnerApplicationJson<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  if (init.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const response = await fetch(`${getPartnerApplicationsApiBaseUrl()}${path}`, { ...init, headers });
+  const payload = (await response.json().catch(() => null)) as unknown;
+  if (!response.ok) {
+    throw new Error(getApiErrorMessage(payload) || "입점 신청 요청에 실패했습니다.");
+  }
+  return unwrapApiEnvelope<T>(payload);
+}
+
 function unwrapApiEnvelope<T>(payload: unknown): T {
   if (payload && typeof payload === "object" && "data" in payload) {
     const envelope = payload as PartnerApiEnvelope<T>;
@@ -215,11 +255,20 @@ function toSnakeDeep(value: unknown): unknown {
 }
 
 function snakeToCamel(key: string) {
-  return key.replace(/_([a-z])/g, (_, character: string) => character.toUpperCase());
+  return key.replace(/_([a-z0-9])/g, (_, character: string) => character.toUpperCase());
 }
 
 function camelToSnake(key: string) {
-  return key.replace(/[A-Z]/g, (character) => `_${character.toLowerCase()}`);
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/([A-Za-z])([0-9])/g, "$1_$2")
+    .replace(/([0-9])([A-Za-z])/g, "$1_$2")
+    .toLowerCase();
+}
+
+function normalizeConsultingModes(modes: ConsultingMode[] | undefined) {
+  const normalized = Array.from(new Set((modes ?? []).filter((mode) => mode === "online" || mode === "offline")));
+  return normalized.length ? normalized : (["online"] as ConsultingMode[]);
 }
 
 function upsertById<T extends { id: string }>(source: T[], records: T[]) {
@@ -351,6 +400,7 @@ let reviews: Review[] = [];
 let managerSettings: ManagerSettings = {
   operatingHours: defaultOperatingHours,
   holidays: [],
+  bookingOpenMonths: 1,
   notification: {
     bookingCreated: true,
     bookingReminder: true,
@@ -392,8 +442,16 @@ export interface PartnerApplicationInput {
   specialties: string[];
   categories: string[];
   introduction: string;
+  consultingModes: ConsultingMode[];
   price30Min: number;
   price60Min: number;
+  onlinePrice30Min?: number;
+  onlinePrice60Min?: number;
+  offlinePrice30Min?: number;
+  offlinePrice60Min?: number;
+  offlineAddress?: string;
+  offlineDetailAddress?: string;
+  offlineLocationNote?: string;
   businessRegistrationFileName?: string;
   beautyLicenseFileName?: string;
   additionalCertificateFileNames?: string[];
@@ -542,30 +600,30 @@ export async function completePartnerPasswordChange(accountId: string, nextPassw
 }
 
 export async function submitPartnerApplication(input: PartnerApplicationInput): Promise<PartnerApplication> {
-  await delay(320);
-  const id = `app-${Date.now()}`;
-  const submittedAt = nowIso();
-  const documents = createApplicationDocuments(id, input);
-  const application: PartnerApplication = {
-    id,
-    partnerType: input.partnerType,
-    businessName: input.businessName,
-    ownerName: input.ownerName,
-    businessRegistrationNumber: input.businessRegistrationNumber,
-    phone: input.phone,
-    email: input.email,
-    specialties: input.specialties,
-    categories: input.categories,
-    introduction: input.introduction,
-    price30Min: input.price30Min,
-    price60Min: input.price60Min,
-    status: "submitted",
-    submittedAt,
-    updatedAt: submittedAt,
-    documents,
+  const consultingModes = normalizeConsultingModes(input.consultingModes);
+  const hasOnline = consultingModes.includes("online");
+  const hasOffline = consultingModes.includes("offline");
+  const price30Min = hasOnline ? input.onlinePrice30Min ?? input.price30Min : input.offlinePrice30Min ?? input.price30Min;
+  const price60Min = hasOnline ? input.onlinePrice60Min ?? input.price60Min : input.offlinePrice60Min ?? input.price60Min;
+  const payload: PartnerApplicationInput = {
+    ...input,
+    consultingModes,
+    price30Min,
+    price60Min,
+    onlinePrice30Min: hasOnline ? input.onlinePrice30Min ?? price30Min : undefined,
+    onlinePrice60Min: hasOnline ? input.onlinePrice60Min ?? price60Min : undefined,
+    offlinePrice30Min: hasOffline ? input.offlinePrice30Min ?? price30Min : undefined,
+    offlinePrice60Min: hasOffline ? input.offlinePrice60Min ?? price60Min : undefined,
+    offlineAddress: hasOffline ? input.offlineAddress?.trim() : undefined,
+    offlineDetailAddress: hasOffline ? input.offlineDetailAddress?.trim() : undefined,
+    offlineLocationNote: hasOffline ? input.offlineLocationNote?.trim() : undefined,
   };
-  partnerApplications = [application, ...partnerApplications];
-  addApplicationReviewLog(application.id, "신청자", "submitted", "입점 신청서와 필수 PDF 서류를 제출했습니다.");
+  const raw = await requestPartnerApplicationJson<unknown>("", {
+    method: "POST",
+    body: JSON.stringify(toSnakeDeep(payload)),
+  });
+  const application = toCamelDeep(raw) as PartnerApplication;
+  partnerApplications = upsertById(partnerApplications, [application]);
   return clone(application);
 }
 
@@ -1145,6 +1203,209 @@ export async function createPhoneAction(request: PhoneActionRequest): Promise<{ 
   });
 }
 
+function normalizeCallLanguageCode(value: unknown): ConsultingCallLanguageCode | null {
+  return value === "ko-KR" || value === "en-US" ? value : null;
+}
+
+function normalizeCallTranscriptionStatus(value: unknown): ConsultingCallTranscriptionStatus {
+  return value === "stopped" ||
+    value === "starting" ||
+    value === "active" ||
+    value === "stopping" ||
+    value === "failed"
+    ? value
+    : "disabled";
+}
+
+function normalizeCallTranscriptionMode(value: unknown): ConsultingCallTranscriptionMode {
+  return value === "identify" ? "identify" : "fixed";
+}
+
+function normalizeCallTranscription(value: unknown): ConsultingCallTranscription {
+  const raw = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  return {
+    enabled: Boolean(raw.enabled),
+    translationEnabled: Boolean(raw.translationEnabled),
+    status: normalizeCallTranscriptionStatus(raw.status),
+    mode: normalizeCallTranscriptionMode(raw.mode),
+    languageCode: normalizeCallLanguageCode(raw.languageCode),
+    customerLanguageCode: normalizeCallLanguageCode(raw.customerLanguageCode),
+    expertLanguageCode: normalizeCallLanguageCode(raw.expertLanguageCode),
+  };
+}
+
+function normalizeCallState(value: unknown, bookingId: string): ConsultingCallState {
+  const raw = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const rawStatus = raw.status;
+  return {
+    callSessionId: raw.callSessionId ? String(raw.callSessionId) : null,
+    bookingId: String(raw.bookingId ?? bookingId),
+    provider: "chime",
+    providerMeetingId: raw.providerMeetingId ? String(raw.providerMeetingId) : null,
+    mediaRegion: raw.mediaRegion ? String(raw.mediaRegion) : null,
+    status:
+      rawStatus === "created" ||
+      rawStatus === "active" ||
+      rawStatus === "ended" ||
+      rawStatus === "failed"
+        ? rawStatus
+        : "not_started",
+    startedAt: raw.startedAt ? String(raw.startedAt) : null,
+    endedAt: raw.endedAt ? String(raw.endedAt) : null,
+    chimeEnabled: Boolean(raw.chimeEnabled),
+    transcription: normalizeCallTranscription(raw.transcription),
+  };
+}
+
+function normalizeCallJoinResult(value: unknown, bookingId: string): ConsultingCallJoinResult {
+  const raw = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const participant = raw.participant && typeof raw.participant === "object"
+    ? (raw.participant as Record<string, unknown>)
+    : {};
+  const supportedLanguageCodes = Array.isArray(raw.supportedLanguageCodes)
+    ? raw.supportedLanguageCodes.map(normalizeCallLanguageCode).filter((value): value is ConsultingCallLanguageCode => Boolean(value))
+    : [];
+  const transcription = normalizeCallTranscription(raw.transcription);
+  return {
+    callSessionId: String(raw.callSessionId ?? ""),
+    bookingId: String(raw.bookingId ?? bookingId),
+    participantType: raw.participantType === "user" || raw.participantType === "expert" ? raw.participantType : undefined,
+    participantLanguageCode: normalizeCallLanguageCode(raw.participantLanguageCode) ?? undefined,
+    supportedLanguageCodes: supportedLanguageCodes.length ? supportedLanguageCodes : undefined,
+    participant: {
+      id: String(participant.id ?? ""),
+      type: participant.type === "customer" ? "customer" : "partner",
+      languageCode: normalizeCallLanguageCode(participant.languageCode) ?? "ko-KR",
+    },
+    meeting: raw.meeting && typeof raw.meeting === "object" ? (raw.meeting as Record<string, unknown>) : {},
+    attendee: raw.attendee && typeof raw.attendee === "object" ? (raw.attendee as Record<string, unknown>) : {},
+    transcription,
+    transcriptionStatus: normalizeCallTranscriptionStatus(raw.transcriptionStatus ?? transcription.status),
+    transcriptionMode: normalizeCallTranscriptionMode(raw.transcriptionMode ?? transcription.mode),
+  };
+}
+
+function normalizeCaptionTranslation(value: unknown): ConsultingCaptionTranslation {
+  const raw = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const sourceLanguageCode = normalizeCallLanguageCode(raw.sourceLanguageCode);
+  const targetLanguageCode = raw.targetLanguageCode === "en" ? "en" : "ko";
+  return {
+    resultId: String(raw.resultId ?? ""),
+    sourceLanguageCode: sourceLanguageCode ?? "ko-KR",
+    targetLanguageCode,
+    translatedContent: String(raw.translatedContent ?? ""),
+  };
+}
+
+export async function getBookingCallState(bookingId: string, user?: AuthUser): Promise<ConsultingCallState> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<{ call: unknown }>(`/bookings/${encodeURIComponent(bookingId)}/call`);
+    return normalizeCallState(data.call, bookingId);
+  }
+  await delay(120);
+  findBooking(bookingId, user);
+  return normalizeCallState({ bookingId, chimeEnabled: false, status: "not_started" }, bookingId);
+}
+
+export async function joinBookingCall(
+  bookingId: string,
+  languageCode: ConsultingCallLanguageCode = "ko-KR",
+  user?: AuthUser,
+): Promise<ConsultingCallJoinResult> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<{ call: unknown }>(
+      `/bookings/${encodeURIComponent(bookingId)}/call/join`,
+      {
+        method: "POST",
+        body: JSON.stringify({ languageCode }),
+      },
+    );
+    return normalizeCallJoinResult(data.call, bookingId);
+  }
+  await delay(160);
+  findBooking(bookingId, user);
+  throw new Error("로컬 목업에서는 Chime 화상상담 입장을 지원하지 않습니다.");
+}
+
+export async function endBookingCall(bookingId: string, user?: AuthUser): Promise<ConsultingCallState> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<{ call: unknown }>(
+      `/bookings/${encodeURIComponent(bookingId)}/call/end`,
+      { method: "POST" },
+    );
+    return normalizeCallState(data.call, bookingId);
+  }
+  await delay(120);
+  findBooking(bookingId, user);
+  return normalizeCallState({ bookingId, chimeEnabled: false, status: "ended" }, bookingId);
+}
+
+export async function startBookingCallTranscription(
+  bookingId: string,
+  languageCode: ConsultingCallLanguageCode = "ko-KR",
+  user?: AuthUser,
+  transcriptionConsentAccepted = false,
+): Promise<ConsultingCallState> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<{ call: unknown }>(
+      `/bookings/${encodeURIComponent(bookingId)}/call/transcription/start`,
+      {
+        method: "POST",
+        body: JSON.stringify({ languageCode, transcriptionConsentAccepted }),
+      },
+    );
+    return normalizeCallState(data.call, bookingId);
+  }
+  if (!transcriptionConsentAccepted) {
+    throw new Error("실시간 자막을 시작하려면 고객과 상담사의 음성 인식 동의 확인이 필요합니다.");
+  }
+  await delay(120);
+  findBooking(bookingId, user);
+  return normalizeCallState({ bookingId, chimeEnabled: false, status: "not_started" }, bookingId);
+}
+
+export async function stopBookingCallTranscription(bookingId: string, user?: AuthUser): Promise<ConsultingCallState> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<{ call: unknown }>(
+      `/bookings/${encodeURIComponent(bookingId)}/call/transcription/stop`,
+      { method: "POST" },
+    );
+    return normalizeCallState(data.call, bookingId);
+  }
+  await delay(120);
+  findBooking(bookingId, user);
+  return normalizeCallState({ bookingId, chimeEnabled: false, status: "not_started" }, bookingId);
+}
+
+export async function translateBookingCallCaption(
+  bookingId: string,
+  payload: {
+    resultId: string;
+    sourceLanguageCode: ConsultingCallLanguageCode;
+    content: string;
+  },
+  user?: AuthUser,
+): Promise<ConsultingCaptionTranslation> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<{ resultId?: string; sourceLanguageCode?: ConsultingCallLanguageCode; targetLanguageCode?: "ko" | "en"; translatedContent?: string }>(
+      `/bookings/${encodeURIComponent(bookingId)}/call/captions/translate`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+    return normalizeCaptionTranslation(data);
+  }
+  await delay(120);
+  findBooking(bookingId, user);
+  return normalizeCaptionTranslation({
+    resultId: payload.resultId,
+    sourceLanguageCode: payload.sourceLanguageCode,
+    targetLanguageCode: payload.sourceLanguageCode === "ko-KR" ? "en" : "ko",
+    translatedContent: payload.content,
+  });
+}
+
 export async function getSharedReports(customerId?: string, user?: AuthUser): Promise<SharedReport[]> {
   if (shouldUsePartnerApi(user)) {
     const data = await requestPartnerJson<{ reports: SharedReport[] }>(
@@ -1488,12 +1749,25 @@ export async function updateAvailability(slot: AvailabilitySlot): Promise<Availa
   return clone(slot);
 }
 
-export async function getSettings(): Promise<ManagerSettings> {
+export async function getSettings(user?: AuthUser): Promise<ManagerSettings> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<{ settings: ManagerSettings }>("/settings");
+    managerSettings = { ...managerSettings, ...data.settings };
+    return clone(managerSettings);
+  }
   await delay();
   return clone(managerSettings);
 }
 
-export async function updateSettings(patch: Partial<ManagerSettings>): Promise<ManagerSettings> {
+export async function updateSettings(patch: Partial<ManagerSettings>, user?: AuthUser): Promise<ManagerSettings> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<{ settings: ManagerSettings }>("/settings", {
+      method: "PATCH",
+      body: JSON.stringify(toSnakeDeep(patch)),
+    });
+    managerSettings = { ...managerSettings, ...data.settings };
+    return clone(managerSettings);
+  }
   await delay();
   managerSettings = { ...managerSettings, ...patch };
   return clone(managerSettings);

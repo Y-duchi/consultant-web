@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from calendar import monthrange
 from collections import defaultdict
+from datetime import date
 from datetime import datetime, timedelta, timezone
 import json
 from typing import Any
@@ -14,6 +16,27 @@ from app.settings import get_settings
 
 
 _cached_dsn: str | None = None
+_KST = timezone(timedelta(hours=9))
+_DAY_LABELS = ["월", "화", "수", "목", "금", "토", "일"]
+_DEFAULT_BOOKING_OPEN_MONTHS = 1
+_DEFAULT_NOTIFICATION_SETTINGS = {
+  "booking_created": True,
+  "booking_reminder": True,
+  "unread_chat_digest": True,
+  "review_created": True,
+}
+_DEFAULT_INTEGRATIONS = {
+  "phone_provider": "none",
+  "chat_provider": "websocket",
+  "sms_provider": "none",
+}
+
+
+def _default_operating_hours() -> list[dict[str, Any]]:
+  return [
+    {"day_of_week": day, "label": label, "opens_at": "10:00", "closes_at": "19:00", "is_closed": day >= 5}
+    for day, label in enumerate(_DAY_LABELS)
+  ]
 
 
 def _get_dsn() -> str:
@@ -28,6 +51,14 @@ def _get_dsn() -> str:
 
 async def _connect() -> asyncpg.Connection:
   return await asyncpg.connect(dsn=_get_dsn())
+
+
+async def _ensure_expert_schedule_columns(conn: asyncpg.Connection) -> None:
+  await conn.execute("alter table consulting_experts add column if not exists operating_hours jsonb")
+  await conn.execute("alter table consulting_experts add column if not exists holiday_dates jsonb")
+  await conn.execute(
+    f"alter table consulting_experts add column if not exists booking_open_months integer not null default {_DEFAULT_BOOKING_OPEN_MONTHS}"
+  )
 
 
 def _text(value: Any, fallback: str = "") -> str:
@@ -110,6 +141,100 @@ def _payload_get(payload: dict[str, Any], snake_key: str, camel_key: str | None 
   if camel_key and camel_key in payload:
     return payload[camel_key]
   return None
+
+
+def _time_to_minutes(value: Any, *, field_name: str) -> int:
+  raw = str(value or "").strip()
+  parts = raw.split(":")
+  if len(parts) < 2:
+    raise HTTPException(status_code=422, detail=f"{field_name} must be HH:MM.")
+  try:
+    hour = int(parts[0])
+    minute = int(parts[1])
+  except ValueError as exc:
+    raise HTTPException(status_code=422, detail=f"{field_name} must be HH:MM.") from exc
+  if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+    raise HTTPException(status_code=422, detail=f"{field_name} must be HH:MM.")
+  return hour * 60 + minute
+
+
+def _minutes_to_time(value: int) -> str:
+  return f"{value // 60:02d}:{value % 60:02d}"
+
+
+def _normalize_operating_hours(value: Any) -> list[dict[str, Any]]:
+  raw_hours = value if isinstance(value, list) else []
+  by_day: dict[int, dict[str, Any]] = {}
+  for raw in raw_hours:
+    if not isinstance(raw, dict):
+      continue
+    day = _int(_payload_get(raw, "day_of_week", "dayOfWeek"), -1)
+    if day < 0 or day > 6:
+      continue
+    is_closed = bool(_payload_get(raw, "is_closed", "isClosed"))
+    opens_at = str(_payload_get(raw, "opens_at", "opensAt") or "10:00")
+    closes_at = str(_payload_get(raw, "closes_at", "closesAt") or "19:00")
+    open_minutes = _time_to_minutes(opens_at, field_name=f"{_DAY_LABELS[day]} opens_at")
+    close_minutes = _time_to_minutes(closes_at, field_name=f"{_DAY_LABELS[day]} closes_at")
+    if not is_closed and open_minutes >= close_minutes:
+      raise HTTPException(status_code=422, detail=f"{_DAY_LABELS[day]} 영업 종료 시간은 시작 시간 이후여야 합니다.")
+
+    lunch_start_value = _payload_get(raw, "lunch_start", "lunchStart")
+    lunch_end_value = _payload_get(raw, "lunch_end", "lunchEnd")
+    lunch_start = str(lunch_start_value or "").strip()
+    lunch_end = str(lunch_end_value or "").strip()
+    normalized: dict[str, Any] = {
+      "day_of_week": day,
+      "label": str(_payload_get(raw, "label") or _DAY_LABELS[day]),
+      "opens_at": _minutes_to_time(open_minutes),
+      "closes_at": _minutes_to_time(close_minutes),
+      "is_closed": is_closed,
+    }
+    if lunch_start or lunch_end:
+      if not lunch_start or not lunch_end:
+        raise HTTPException(status_code=422, detail=f"{_DAY_LABELS[day]} 점심 시간은 시작과 종료를 함께 입력해야 합니다.")
+      lunch_start_minutes = _time_to_minutes(lunch_start, field_name=f"{_DAY_LABELS[day]} lunch_start")
+      lunch_end_minutes = _time_to_minutes(lunch_end, field_name=f"{_DAY_LABELS[day]} lunch_end")
+      if lunch_start_minutes >= lunch_end_minutes:
+        raise HTTPException(status_code=422, detail=f"{_DAY_LABELS[day]} 점심 종료 시간은 시작 시간 이후여야 합니다.")
+      if not is_closed and (lunch_start_minutes < open_minutes or lunch_end_minutes > close_minutes):
+        raise HTTPException(status_code=422, detail=f"{_DAY_LABELS[day]} 점심 시간은 영업시간 안에 있어야 합니다.")
+      normalized["lunch_start"] = _minutes_to_time(lunch_start_minutes)
+      normalized["lunch_end"] = _minutes_to_time(lunch_end_minutes)
+    by_day[day] = normalized
+
+  defaults = _default_operating_hours()
+  return [by_day.get(day, defaults[day]) for day in range(7)]
+
+
+def _normalize_holidays(value: Any) -> list[str]:
+  holidays: list[str] = []
+  for item in _list(value):
+    raw = str(item or "").strip()
+    if not raw:
+      continue
+    try:
+      normalized = datetime.fromisoformat(raw).date().isoformat()
+    except ValueError as exc:
+      raise HTTPException(status_code=422, detail="휴무일은 YYYY-MM-DD 형식이어야 합니다.") from exc
+    if normalized not in holidays:
+      holidays.append(normalized)
+  return sorted(holidays)
+
+
+def _normalize_booking_open_months(value: Any) -> int:
+  months = _int(value, _DEFAULT_BOOKING_OPEN_MONTHS)
+  if months < 1 or months > 3:
+    raise HTTPException(status_code=422, detail="예약 오픈 범위는 1개월 이상 3개월 이하로 설정해 주세요.")
+  return months
+
+
+def _add_calendar_months(value: date, months: int) -> date:
+  month_index = value.month - 1 + months
+  year = value.year + month_index // 12
+  month = month_index % 12 + 1
+  day = min(value.day, monthrange(year, month)[1])
+  return value.replace(year=year, month=month, day=day)
 
 
 def _parse_iso_datetime(value: Any) -> datetime:
@@ -323,6 +448,132 @@ def _account_from_row(row: asyncpg.Record) -> dict[str, Any]:
   }
 
 
+def _schedule_settings_from_row(row: asyncpg.Record | None) -> dict[str, Any]:
+  if row is None:
+    return {
+      "operating_hours": _default_operating_hours(),
+      "holidays": [],
+      "booking_open_months": _DEFAULT_BOOKING_OPEN_MONTHS,
+    }
+  stored_hours = _json(row["operating_hours"], [])
+  stored_holidays = _json(row["holiday_dates"], [])
+  return {
+    "operating_hours": _normalize_operating_hours(stored_hours) if stored_hours else _default_operating_hours(),
+    "holidays": _normalize_holidays(stored_holidays),
+    "booking_open_months": _normalize_booking_open_months(row["booking_open_months"]),
+  }
+
+
+async def get_expert_schedule_settings(expert_id: str) -> dict[str, Any]:
+  conn = await _connect()
+  try:
+    await _ensure_expert_schedule_columns(conn)
+    row = await conn.fetchrow(
+      """
+      select operating_hours, holiday_dates, booking_open_months
+      from consulting_experts
+      where id = $1
+      """,
+      expert_id,
+    )
+    if row is None:
+      raise HTTPException(status_code=404, detail="Expert not found.")
+    return _schedule_settings_from_row(row)
+  finally:
+    await conn.close()
+
+
+async def get_partner_settings(principal: PartnerPrincipal) -> dict[str, Any]:
+  if not principal.expert_id:
+    raise HTTPException(status_code=403, detail="Partner expert scope is required.")
+  schedule = await get_expert_schedule_settings(principal.expert_id)
+  account = await find_partner_account(principal.account_id)
+  expert = await get_expert(principal.expert_id)
+  account_roles = []
+  if account:
+    account_roles.append({
+      "id": account["id"],
+      "name": expert["name"],
+      "email": account["email"],
+      "role": account["role"],
+      "scope": account["workspace_scope"],
+    })
+  return {
+    **schedule,
+    "notification": dict(_DEFAULT_NOTIFICATION_SETTINGS),
+    "integrations": dict(_DEFAULT_INTEGRATIONS),
+    "account_roles": account_roles,
+  }
+
+
+async def update_partner_settings(payload: dict[str, Any], principal: PartnerPrincipal) -> dict[str, Any]:
+  if not principal.expert_id:
+    raise HTTPException(status_code=403, detail="Partner expert scope is required.")
+
+  current = await get_expert_schedule_settings(principal.expert_id)
+  raw_hours = _payload_get(payload, "operating_hours", "operatingHours")
+  raw_holidays = _payload_get(payload, "holidays")
+  raw_open_months = _payload_get(payload, "booking_open_months", "bookingOpenMonths")
+
+  operating_hours = _normalize_operating_hours(raw_hours) if raw_hours is not None else current["operating_hours"]
+  holidays = _normalize_holidays(raw_holidays) if raw_holidays is not None else current["holidays"]
+  booking_open_months = _normalize_booking_open_months(raw_open_months) if raw_open_months is not None else current["booking_open_months"]
+
+  conn = await _connect()
+  try:
+    await _ensure_expert_schedule_columns(conn)
+    await conn.execute(
+      """
+      update consulting_experts
+      set operating_hours = $2::jsonb,
+          holiday_dates = $3::jsonb,
+          booking_open_months = $4,
+          updated_at = now()
+      where id = $1
+      """,
+      principal.expert_id,
+      json.dumps(operating_hours, ensure_ascii=False),
+      json.dumps(holidays, ensure_ascii=False),
+      booking_open_months,
+    )
+  finally:
+    await conn.close()
+  return await get_partner_settings(principal)
+
+
+async def assert_booking_time_allowed(expert_id: str, starts_at: datetime, duration_minutes: int) -> None:
+  settings = await get_expert_schedule_settings(expert_id)
+  local_starts_at = starts_at.astimezone(_KST)
+  local_date = local_starts_at.date()
+  today = datetime.now(_KST).date()
+  open_until = _add_calendar_months(today, settings["booking_open_months"])
+  if local_date < today:
+    raise HTTPException(status_code=422, detail="지난 날짜로는 예약 시간을 변경할 수 없습니다.")
+  if local_date > open_until:
+    raise HTTPException(status_code=422, detail=f"예약은 오늘부터 {settings['booking_open_months']}개월 이내 날짜만 열 수 있습니다.")
+  if local_date.isoformat() in settings["holidays"]:
+    raise HTTPException(status_code=422, detail="설정된 휴무일에는 예약을 열 수 없습니다.")
+
+  hour = settings["operating_hours"][local_starts_at.weekday()]
+  if hour["is_closed"]:
+    raise HTTPException(status_code=422, detail=f"{hour['label']}요일은 휴무일로 설정되어 있습니다.")
+
+  start_minutes = local_starts_at.hour * 60 + local_starts_at.minute
+  end_minutes = start_minutes + duration_minutes
+  opens_at = _time_to_minutes(hour["opens_at"], field_name="opens_at")
+  closes_at = _time_to_minutes(hour["closes_at"], field_name="closes_at")
+  if start_minutes < opens_at or end_minutes > closes_at:
+    raise HTTPException(status_code=422, detail=f"예약 시간은 {hour['opens_at']}-{hour['closes_at']} 안에서만 설정할 수 있습니다.")
+
+  lunch_start = hour.get("lunch_start")
+  lunch_end = hour.get("lunch_end")
+  if lunch_start and lunch_end:
+    lunch_start_minutes = _time_to_minutes(lunch_start, field_name="lunch_start")
+    lunch_end_minutes = _time_to_minutes(lunch_end, field_name="lunch_end")
+    if start_minutes < lunch_end_minutes and end_minutes > lunch_start_minutes:
+      raise HTTPException(status_code=422, detail=f"점심 차단 시간({lunch_start}-{lunch_end})에는 예약을 열 수 없습니다.")
+
+
 async def admin_dashboard() -> dict[str, Any]:
   conn = await _connect()
   try:
@@ -532,6 +783,7 @@ async def _list_bookings(principal: PartnerPrincipal | None, filters: dict[str, 
              b.status, b.price, b.created_at, b.updated_at, b.scheduled_date,
              b.slot_start_minutes, b.contact_name, b.contact_phone, b.preferred_contact_method,
              b.operator_note, b.confirmed_at, b.expert_read_at,
+             to_jsonb(b)->>'session_mode' as session_mode,
              coalesce(u.name, u.nickname, b.contact_name, '이름 없는 고객') as customer_name,
              u.email::text as customer_email, u.phone as customer_phone,
              e.name as expert_name, e.title as expert_title, e.studio_name,
@@ -708,13 +960,18 @@ async def save_partner_booking_changes(booking_id: str, payload: dict[str, Any],
     update_parts.append(f"duration_code = {add_arg('30m' if duration_minutes == 30 else '60m')}")
 
   starts_at_value = _payload_get(patch, "starts_at", "startsAt")
+  candidate_starts_at = _parse_iso_datetime(booking["starts_at"])
   if starts_at_value is not None:
     starts_at = _parse_iso_datetime(starts_at_value)
+    candidate_starts_at = starts_at
     local_starts_at = starts_at.astimezone(timezone(timedelta(hours=9)))
     update_parts.append(f"scheduled_at = {add_arg(starts_at)}")
     update_parts.append(f"scheduled_date = {add_arg(local_starts_at.date())}")
     update_parts.append(f"slot_start_minutes = {add_arg(local_starts_at.hour * 60 + local_starts_at.minute)}")
     update_parts.append(f"date_label = {add_arg(local_starts_at.date().isoformat())}")
+
+  if starts_at_value is not None or duration_value is not None:
+    await assert_booking_time_allowed(booking["expert_id"], candidate_starts_at, duration_minutes)
 
   if should_update_memo:
     update_parts.append(f"operator_note = {add_arg(memo_value)}")
@@ -1024,7 +1281,9 @@ async def _fetch_reports_by_ids(report_ids: list[str], include_detail: bool = Fa
              r.analyzed_at, r.created_at, r.personal_color, r.face_shape, r.skin_type,
              r.tone_summary, r.recommended_mood, r.summary, r.short_summary,
              r.skin_analysis_summary, r.base_makeup_guide, r.tags, r.detail_payload,
-             coalesce(preview.thumbnail_cdn_url, preview.cdn_url, source.thumbnail_cdn_url, source.cdn_url) image_url
+             coalesce(preview.thumbnail_cdn_url, preview.cdn_url, source.thumbnail_cdn_url, source.cdn_url) image_url,
+             coalesce(source.thumbnail_cdn_url, source.cdn_url) source_image_url,
+             coalesce(preview.thumbnail_cdn_url, preview.cdn_url) preview_image_url
       from analysis_reports r
       left join media_assets preview on preview.id = r.preview_media_id
       left join media_assets source on source.id = r.source_media_id
@@ -1059,7 +1318,9 @@ async def _fetch_reports_for_customer(customer_id: str) -> list[dict[str, Any]]:
              r.analyzed_at, r.created_at, r.personal_color, r.face_shape, r.skin_type,
              r.tone_summary, r.recommended_mood, r.summary, r.short_summary,
              r.skin_analysis_summary, r.base_makeup_guide, r.tags, r.detail_payload,
-             coalesce(preview.thumbnail_cdn_url, preview.cdn_url, source.thumbnail_cdn_url, source.cdn_url) image_url
+             coalesce(preview.thumbnail_cdn_url, preview.cdn_url, source.thumbnail_cdn_url, source.cdn_url) image_url,
+             coalesce(source.thumbnail_cdn_url, source.cdn_url) source_image_url,
+             coalesce(preview.thumbnail_cdn_url, preview.cdn_url) preview_image_url
       from analysis_reports r
       left join media_assets preview on preview.id = r.preview_media_id
       left join media_assets source on source.id = r.source_media_id
@@ -1292,10 +1553,7 @@ def _business_from_expert(expert: dict[str, Any]) -> dict[str, Any]:
     "verification_status": "approved",
     "verification_documents": [],
     "settlement_account_status": "approved",
-    "default_operating_hours": [
-      {"day_of_week": day, "label": label, "opens_at": "10:00", "closes_at": "19:00", "is_closed": day >= 5}
-      for day, label in enumerate(["월", "화", "수", "목", "금", "토", "일"])
-    ],
+    "default_operating_hours": _default_operating_hours(),
     "cancellation_policy": "예약 확정 전 취소 가능하며, 확정 이후에는 채팅방에서 전문가와 조율합니다.",
     "refund_policy": "선결제/예약금 환불은 상담 진행 여부와 채팅 기록을 기준으로 운영자가 확인합니다.",
   }
@@ -1322,7 +1580,7 @@ def _booking_from_row(row: asyncpg.Record) -> dict[str, Any]:
     "payment_status": payment_status,
     "paid_amount": paid_amount,
     "discount_amount": 0,
-    "channel": "video",
+    "channel": "offline" if row["session_mode"] == "offline" else "video",
     "requested_at": _iso(row["created_at"]),
     "request_memo": row["question"] or row["concern_label"] or "",
     "selected_concern_tags": [row["concern_label"]] if row["concern_label"] else [],
@@ -1368,6 +1626,29 @@ def _customer_from_row(row: asyncpg.Record) -> dict[str, Any]:
   }
 
 
+def _recommended_makeup_images(payload: dict[str, Any]) -> list[dict[str, str]]:
+  result = payload.get("result") if isinstance(payload, dict) else None
+  cards = result.get("recommendedMakeups") if isinstance(result, dict) else None
+  if not isinstance(cards, list):
+    return []
+
+  images: list[dict[str, str]] = []
+  for index, card in enumerate(cards):
+    if not isinstance(card, dict):
+      continue
+    image_url = next(
+      (
+        str(card[key]).strip()
+        for key in ("imageUrl", "cdnUrl", "previewUrl", "image_url")
+        if card.get(key) and str(card[key]).strip()
+      ),
+      "",
+    )
+    if image_url:
+      images.append({"title": str(card.get("title") or f"AI 추천 메이크업 {index + 1}"), "image_url": image_url})
+  return images
+
+
 def _analysis_report_from_row(row: asyncpg.Record, *, include_detail: bool) -> dict[str, Any]:
   summary = row["summary"] or row["short_summary"] or row["tone_summary"] or row["skin_analysis_summary"] or "AI 얼굴 분석 리포트"
   report = {
@@ -1390,6 +1671,9 @@ def _analysis_report_from_row(row: asyncpg.Record, *, include_detail: bool) -> d
       "source": report["source"],
       "created_at": report["created_at"],
       "image_url": row["image_url"],
+      "source_image_url": row["source_image_url"],
+      "preview_image_url": row["preview_image_url"],
+      "recommended_makeup_images": _recommended_makeup_images(payload),
       "personal_color": row["personal_color"],
       "face_shape": row["face_shape"],
       "skin_type": row["skin_type"],
@@ -1402,6 +1686,7 @@ def _analysis_report_from_row(row: asyncpg.Record, *, include_detail: bool) -> d
       "key_findings": payload.get("keyFindings") or payload.get("key_findings") or [],
       "action_steps": payload.get("actionSteps") or payload.get("action_steps") or [],
       "raw_payload": payload,
+      "detail_payload": payload,
     }
   return report
 
@@ -1474,8 +1759,16 @@ def _application_from_row(row: asyncpg.Record) -> dict[str, Any]:
     "specialties": _list(row["specialties"]),
     "categories": _list(row["categories"]),
     "introduction": row["introduction"] or "",
+    "consulting_modes": ["online"],
     "price_30_min": _int(row["price_30_min"]),
     "price_60_min": _int(row["price_60_min"]),
+    "online_price_30_min": _int(row["price_30_min"]),
+    "online_price_60_min": _int(row["price_60_min"]),
+    "offline_price_30_min": None,
+    "offline_price_60_min": None,
+    "offline_address": None,
+    "offline_detail_address": None,
+    "offline_location_note": None,
     "status": row["status"],
     "submitted_at": _iso(row["submitted_at"]),
     "updated_at": _iso(row["updated_at"]),
