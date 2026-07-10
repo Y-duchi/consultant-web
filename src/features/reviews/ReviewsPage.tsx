@@ -56,7 +56,7 @@ export function ReviewsPage() {
       <PageHeader
         eyebrow="Reviews"
         title="리뷰 관리"
-        description="고객 앱의 전문가 상세 페이지에 노출되는 리뷰를 예약 건, 고객, 전문가와 연결해 확인합니다. 숨김/신고/답글은 현재 UI와 mock 상태 변경만 제공합니다."
+        description="고객 앱의 전문가 상세 페이지에 노출되는 리뷰를 예약 건, 고객, 전문가와 연결해 확인합니다. 숨김/신고/답글은 현재 UI 상태 변경만 제공합니다."
       />
 
       <div className="filter-bar">

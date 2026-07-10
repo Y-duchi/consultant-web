@@ -92,7 +92,7 @@ class Settings(BaseSettings):
       if not user or not password or not host or not database:
         raise RuntimeError("DATABASE_SECRET_ID must provide username, password, host, and dbname/database.")
 
-      ssl_query = f"?ssl={quote(str(sslmode))}" if sslmode else ""
+      ssl_query = f"?sslmode={quote(str(sslmode))}" if sslmode else ""
       return f"postgresql://{user}:{password}@{host}:{port}/{database}{ssl_query}"
 
     if not self.db_configured:
@@ -100,7 +100,7 @@ class Settings(BaseSettings):
 
     user = quote(self.db_user or "", safe="")
     password = quote(self.db_password or "", safe="")
-    ssl_query = f"?ssl={quote(self.db_sslmode)}" if self.db_sslmode else ""
+    ssl_query = f"?sslmode={quote(self.db_sslmode)}" if self.db_sslmode else ""
     return f"postgresql://{user}:{password}@{self.db_host}:{self.db_port}/{self.db_name}{ssl_query}"
 
   def _read_database_secret(self) -> dict[str, object]:
@@ -115,7 +115,11 @@ class Settings(BaseSettings):
         },
       )
 
-    client = boto3.client("secretsmanager", **client_kwargs)
+    if self.aws_profile_name and not self.aws_use_iam_role and not self.aws_access_key_id:
+      session = boto3.Session(profile_name=self.aws_profile_name, region_name=self.aws_region)
+      client = session.client("secretsmanager")
+    else:
+      client = boto3.client("secretsmanager", **client_kwargs)
     response = client.get_secret_value(SecretId=self.database_secret_id)
     payload = response.get("SecretString")
 

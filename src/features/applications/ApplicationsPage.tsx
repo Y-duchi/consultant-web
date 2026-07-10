@@ -303,7 +303,7 @@ export function ApplicationsPage() {
                   <FileText size={18} />
                   <div>
                     <strong>{documentAccess.fileName}</strong>
-                    <span>{documentAccess.expiresInMinutes}분짜리 mock presigned URL이 준비되었습니다.</span>
+                    <span>{documentAccess.expiresInMinutes}분짜리 문서 접근 URL이 준비되었습니다.</span>
                   </div>
                 </div>
               ) : null}

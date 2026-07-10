@@ -53,7 +53,7 @@ def assert_raises_runtime(callback, expected_fragment: str) -> None:
 
 async def read_first_stream_chunk(stream) -> str:
   try:
-    return await anext(stream)
+    return await stream.__anext__()
   finally:
     await stream.aclose()
 
@@ -179,7 +179,7 @@ def main() -> None:
   assert booking_created_events[0]["business_id"] == "biz-2"
   assert booking_created_events[0]["expert_id"] == "exp-4"
   assert booking_created_events[0]["sequence"] >= 1
-  assert booking_created_events[0]["payload"]["status"] == "scheduled"
+  assert booking_created_events[0]["payload"]["status"] == "requested"
   assert booking_created_events[0]["payload"]["type"] == "앱 신규 예약 · 전화 30분"
   assert any(event["booking_id"] == "book-app-smoke-1" for event in partner_workspace.list_partner_events(expert_b))
   assert not any(event["booking_id"] == "book-app-smoke-1" for event in partner_workspace.list_partner_events(biz_a))

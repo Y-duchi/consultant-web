@@ -29,7 +29,7 @@ export function CompletionPage() {
     queryFn: () => getBookings({ sort: "startsAtDesc" }, user ?? undefined),
   });
   const eligibleBookings = useMemo(
-    () => (bookingsQuery.data ?? []).filter((booking) => booking.status === "confirmed" || booking.status === "completed"),
+    () => (bookingsQuery.data ?? []).filter((booking) => ["scheduled", "in_progress", "completed"].includes(booking.status)),
     [bookingsQuery.data],
   );
 
@@ -109,19 +109,19 @@ export function CompletionPage() {
     <>
       <PageHeader
         eyebrow="Completion"
-        title="상담 완료 및 AI 요약 전달"
-        description="화상 상담 완료 후 생성된 AI 요약본을 확인하고, 전문가 추가 코멘트만 보강해 고객 앱으로 전달합니다."
+        title="상담 완료 및 AI 요약 리포트"
+        description="화상통화가 종료되면 예약은 자동 완료로 전환되고, 통화 transcript 기반 AI 상담 요약 리포트를 고객 앱으로 전달합니다."
       />
 
       {eligibleBookings.length === 0 ? (
-        <EmptyState title="완료 처리할 수 있는 예약이 없습니다" description="AI 요약 전달은 확정된 화상 상담에서 진행할 수 있습니다." />
+        <EmptyState title="완료 처리할 수 있는 예약이 없습니다" description="AI 요약 전달은 상담 예정 또는 진행 중인 화상 상담에서 진행할 수 있습니다." />
       ) : (
         <div className="completion-layout">
           <form className="panel" onSubmit={handleSubmit}>
             <div className="panel-header">
               <div>
-              <h2>AI 상담 요약 확인</h2>
-              <p>상담사는 요약을 직접 작성하지 않고, 필요한 전문가 코멘트만 덧붙입니다.</p>
+              <h2>통화 종료 후 AI 상담 요약</h2>
+              <p>상담사는 통화 transcript로 생성된 요약을 확인하고 필요한 전문가 코멘트만 덧붙입니다.</p>
               </div>
               {detail ? <BookingStatusBadge status={detail.booking.status} /> : null}
             </div>
@@ -135,7 +135,7 @@ export function CompletionPage() {
                   ))}
                 </SelectInput>
               </Field>
-              <Field label="화상상담 transcript" hint="화상통화 연동 전 v1에서는 테스트용 transcript를 붙여넣어 AI 요약을 생성합니다.">
+              <Field label="화상상담 transcript" hint="화상통화 연동 전 v1에서는 테스트용 transcript를 붙여넣으면 예약 완료와 AI 요약 생성이 함께 처리됩니다.">
                 <TextArea value={transcript} onChange={(event) => setTranscript(event.target.value)} placeholder="고객 발화와 전문가 안내를 시간순으로 입력하면 AI 요약본을 생성합니다." />
               </Field>
               <Button
@@ -145,7 +145,7 @@ export function CompletionPage() {
                 disabled={aiSummaryMutation.isPending || !transcript.trim() || !selectedBookingId}
                 onClick={() => aiSummaryMutation.mutate()}
               >
-                {aiSummaryMutation.isPending ? "AI 요약 생성 중" : "AI 요약 생성"}
+                {aiSummaryMutation.isPending ? "AI 요약 생성 중" : "통화 종료/AI 요약 생성"}
               </Button>
               {aiSummaryMutation.isError ? <div className="form-error">{aiSummaryMutation.error.message}</div> : null}
               <Field label="전문가 추가 코멘트" hint="AI 요약본 맨 아래에 전문가 코멘트로 추가됩니다.">
@@ -202,7 +202,7 @@ export function CompletionPage() {
             </div>
             <div className="drawer-footer">
               <Button type="submit" variant="primary" icon={<Send size={16} />} disabled={completionMutation.isPending || !customerSummary.trim() || !recommendations.trim()}>
-                완료 처리 및 앱 전달
+                앱 전달 상태 저장
               </Button>
             </div>
           </form>

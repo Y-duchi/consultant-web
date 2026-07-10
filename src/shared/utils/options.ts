@@ -2,12 +2,12 @@ import type { BookingStatus, PaymentStatus, ReviewStatus } from "../../types/dom
 
 export const bookingStatusOptions: Array<{ value: BookingStatus | "all"; label: string }> = [
   { value: "all", label: "전체 상태" },
-  { value: "requested", label: "신청" },
-  { value: "contacting", label: "확인중" },
-  { value: "confirmed", label: "확정" },
-  { value: "scheduled", label: "예정" },
-  { value: "in_progress", label: "진행중" },
-  { value: "completed", label: "완료" },
+  { value: "requested", label: "예약 신청" },
+  { value: "contacting", label: "채팅/입금 확인" },
+  { value: "confirmed", label: "전문가 확정" },
+  { value: "scheduled", label: "상담 예정" },
+  { value: "in_progress", label: "상담 진행" },
+  { value: "completed", label: "자동 완료" },
   { value: "cancelled", label: "취소" },
   { value: "no_show", label: "노쇼" },
   { value: "refund_requested", label: "환불요청" },

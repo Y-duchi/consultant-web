@@ -22,6 +22,7 @@ import type {
   PartnerApplicationDocumentType,
   PartnerApplicationStatus,
   PartnerBusinessMember,
+  OperatingHours,
   ManagerSettings,
   RefundRequest,
   Review,
@@ -31,27 +32,6 @@ import type {
   WorkspaceScope,
   PartnerType,
 } from "../types/domain";
-import {
-  attachments as initialAttachments,
-  availabilitySlots as initialAvailabilitySlots,
-  bookings as initialBookings,
-  businessProfiles as initialBusinessProfiles,
-  chatMessages as initialChatMessages,
-  chatThreads as initialChatThreads,
-  consultationSummaryJobs as initialConsultationSummaryJobs,
-  consultationSummaries as initialConsultationSummaries,
-  customers as initialCustomers,
-  experts as initialExperts,
-  applicationReviewLogs as initialApplicationReviewLogs,
-  partnerAccounts as initialPartnerAccounts,
-  partnerBusinessMembers as initialPartnerBusinessMembers,
-  partnerApplications as initialPartnerApplications,
-  refundRequests as initialRefundRequests,
-  reviews as initialReviews,
-  settings as initialSettings,
-  sharedReports as initialSharedReports,
-  todayDate,
-} from "./mock/mockData";
 
 const delay = (ms = 180) => new Promise((resolve) => window.setTimeout(resolve, ms));
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -63,6 +43,7 @@ const dateKey = (iso: string) => {
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 };
+const todayDate = () => dateKey(nowIso());
 
 const PARTNER_SESSION_TOKEN_KEY = "consultant-web-partner-session-token";
 
@@ -96,6 +77,29 @@ function getPartnerApiBaseUrl() {
   const raw = import.meta.env.VITE_API_BASE_URL?.trim() || "http://127.0.0.1:8000";
   const trimmed = raw.replace(/\/+$/, "");
   return trimmed.endsWith("/api") ? `${trimmed}/consulting/partner` : `${trimmed}/api/consulting/partner`;
+}
+
+function getAdminApiBaseUrl() {
+  const explicit = import.meta.env.VITE_ADMIN_API_BASE_URL?.trim();
+  if (explicit) {
+    return explicit.replace(/\/+$/, "");
+  }
+
+  if (
+    typeof window !== "undefined" &&
+    window.location.hostname !== "localhost" &&
+    window.location.hostname !== "127.0.0.1"
+  ) {
+    return "/api/admin";
+  }
+
+  const raw = import.meta.env.VITE_API_BASE_URL?.trim() || "http://127.0.0.1:8000";
+  const trimmed = raw.replace(/\/+$/, "");
+  return trimmed.endsWith("/api") ? `${trimmed}/admin` : `${trimmed}/api/admin`;
+}
+
+function shouldUseAdminApi() {
+  return true;
 }
 
 export function getPartnerSessionToken() {
@@ -157,6 +161,67 @@ async function requestPartnerJson<T>(
   return envelope.data;
 }
 
+async function requestAdminJson<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  headers.set("X-Admin-Id", "admin-web");
+  headers.set("X-Aura-Role", "admin");
+  if (init.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const response = await fetch(`${getAdminApiBaseUrl()}${path}`, { ...init, headers });
+  const payload = (await response.json().catch(() => null)) as unknown;
+  if (!response.ok) {
+    throw new Error(getApiErrorMessage(payload) || "관리자 백엔드 요청에 실패했습니다.");
+  }
+  return unwrapApiEnvelope<T>(payload);
+}
+
+function unwrapApiEnvelope<T>(payload: unknown): T {
+  if (payload && typeof payload === "object" && "data" in payload) {
+    const envelope = payload as PartnerApiEnvelope<T>;
+    if (envelope.error) {
+      throw new Error(envelope.error.message || "백엔드 요청에 실패했습니다.");
+    }
+    return envelope.data as T;
+  }
+  return payload as T;
+}
+
+function getApiErrorMessage(payload: unknown) {
+  if (!payload || typeof payload !== "object") return "";
+  const record = payload as Record<string, unknown>;
+  if (typeof record.detail === "string") return record.detail;
+  const error = record.error;
+  if (error && typeof error === "object" && typeof (error as Record<string, unknown>).message === "string") {
+    return (error as Record<string, string>).message;
+  }
+  return "";
+}
+
+function toCamelDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(toCamelDeep);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, item]) => [snakeToCamel(key), toCamelDeep(item)]),
+  );
+}
+
+function toSnakeDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(toSnakeDeep);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, item]) => [camelToSnake(key), toSnakeDeep(item)]),
+  );
+}
+
+function snakeToCamel(key: string) {
+  return key.replace(/_([a-z])/g, (_, character: string) => character.toUpperCase());
+}
+
+function camelToSnake(key: string) {
+  return key.replace(/[A-Z]/g, (character) => `_${character.toLowerCase()}`);
+}
+
 function upsertById<T extends { id: string }>(source: T[], records: T[]) {
   const byId = new Map(source.map((item) => [item.id, item] as const));
   for (const record of records) {
@@ -165,7 +230,16 @@ function upsertById<T extends { id: string }>(source: T[], records: T[]) {
   return Array.from(byId.values());
 }
 
+const customerNameLookup = new Map<string, string>();
+const expertNameLookup = new Map<string, string>();
+
 function rememberBookings(records: Booking[]) {
+  records.forEach((record) => {
+    const customerName = (record as Booking & { customerName?: string }).customerName;
+    const expertName = (record as Booking & { expertName?: string }).expertName;
+    if (customerName) customerNameLookup.set(record.customerId, customerName);
+    if (expertName) expertNameLookup.set(record.expertId, expertName);
+  });
   bookings = upsertById(bookings, records);
 }
 
@@ -248,24 +322,49 @@ async function rememberPartnerWorkspaceLookups() {
   rememberExperts(expertsData.experts);
 }
 
-let attachments = clone(initialAttachments);
-let availabilitySlots = clone(initialAvailabilitySlots);
-let bookings = clone(initialBookings);
-let businessProfiles = clone(initialBusinessProfiles);
-let chatMessages = clone(initialChatMessages);
-let chatThreads = clone(initialChatThreads);
-let consultationSummaryJobs = clone(initialConsultationSummaryJobs);
-let consultationSummaries = clone(initialConsultationSummaries);
-let customers = clone(initialCustomers);
-let experts = clone(initialExperts);
-let applicationReviewLogs = clone(initialApplicationReviewLogs);
-let partnerAccounts = clone(initialPartnerAccounts);
-let partnerBusinessMembers = clone(initialPartnerBusinessMembers);
-let partnerApplications = clone(initialPartnerApplications);
-let refundRequests = clone(initialRefundRequests);
-let reviews = clone(initialReviews);
-let managerSettings = clone(initialSettings);
-let sharedReports = clone(initialSharedReports);
+const defaultOperatingHours: OperatingHours[] = [
+  { dayOfWeek: 0, label: "월", opensAt: "10:00", closesAt: "19:00", isClosed: false },
+  { dayOfWeek: 1, label: "화", opensAt: "10:00", closesAt: "19:00", isClosed: false },
+  { dayOfWeek: 2, label: "수", opensAt: "10:00", closesAt: "19:00", isClosed: false },
+  { dayOfWeek: 3, label: "목", opensAt: "10:00", closesAt: "19:00", isClosed: false },
+  { dayOfWeek: 4, label: "금", opensAt: "10:00", closesAt: "19:00", isClosed: false },
+  { dayOfWeek: 5, label: "토", opensAt: "10:00", closesAt: "17:00", isClosed: true },
+  { dayOfWeek: 6, label: "일", opensAt: "10:00", closesAt: "17:00", isClosed: true },
+];
+
+let attachments: Attachment[] = [];
+let availabilitySlots: AvailabilitySlot[] = [];
+let bookings: Booking[] = [];
+let businessProfiles: BusinessProfile[] = [];
+let chatMessages: ChatMessage[] = [];
+let chatThreads: ChatThread[] = [];
+let consultationSummaryJobs: ConsultationSummaryJob[] = [];
+let consultationSummaries: ConsultationSummary[] = [];
+let customers: Customer[] = [];
+let experts: Expert[] = [];
+let applicationReviewLogs: ApplicationReviewLog[] = [];
+let partnerAccounts: PartnerAccount[] = [];
+let partnerBusinessMembers: PartnerBusinessMember[] = [];
+let partnerApplications: PartnerApplication[] = [];
+let refundRequests: RefundRequest[] = [];
+let reviews: Review[] = [];
+let managerSettings: ManagerSettings = {
+  operatingHours: defaultOperatingHours,
+  holidays: [],
+  notification: {
+    bookingCreated: true,
+    bookingReminder: true,
+    unreadChatDigest: true,
+    reviewCreated: true,
+  },
+  integrations: {
+    phoneProvider: "none",
+    chatProvider: "websocket",
+    smsProvider: "none",
+  },
+  accountRoles: [],
+};
+let sharedReports: SharedReport[] = [];
 
 export interface LoginRequest {
   email: string;
@@ -340,6 +439,14 @@ export interface BookingDetail {
   review?: Review;
 }
 
+export interface BookingSaveChangesInput {
+  status?: BookingStatus;
+  markPaymentPaid?: boolean;
+  note?: string;
+  cancelReason?: string;
+  patch?: Partial<Pick<Booking, "startsAt" | "endsAt" | "durationMinutes" | "type" | "internalMemo" | "requestMemo">>;
+}
+
 export interface CustomerDetail {
   customer: Customer;
   bookings: Booking[];
@@ -386,7 +493,7 @@ export interface PhoneActionRequest {
   note?: string;
 }
 
-export async function mockLogin(request: LoginRequest): Promise<AuthUser> {
+export async function loginUser(request: LoginRequest): Promise<AuthUser> {
   await delay();
   const email = request.email.trim().toLowerCase();
 
@@ -463,42 +570,20 @@ export async function submitPartnerApplication(input: PartnerApplicationInput): 
 }
 
 export async function getPartnerApplications(filters: PartnerApplicationFilters = {}): Promise<PartnerApplication[]> {
-  await delay();
-  let result = partnerApplications;
-  if (filters.status && filters.status !== "all") {
-    result = result.filter((application) => application.status === filters.status);
-  }
-  if (filters.query) {
-    const query = filters.query.toLowerCase();
-    result = result.filter((application) =>
-      [
-        application.businessName,
-        application.ownerName,
-        application.email,
-        application.phone,
-        application.businessRegistrationNumber,
-        application.specialties.join(" "),
-        application.categories.join(" "),
-      ]
-        .filter(Boolean)
-        .some((value) => value!.toLowerCase().includes(query)),
-    );
-  }
-  return clone([...result].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+  const raw = await requestAdminJson<unknown>(buildPartnerPath("/partner-applications", filters));
+  const records = toCamelDeep(raw) as PartnerApplication[];
+  partnerApplications = upsertById(partnerApplications, records);
+  return clone([...records].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
 }
 
 export async function getPartnerApplicationDetail(applicationId: string): Promise<PartnerApplicationDetail> {
-  await delay();
-  const application = findPartnerApplication(applicationId);
-  const account = partnerAccounts.find((item) => item.applicationId === applicationId);
-  return clone({
-    application,
-    reviewLogs: applicationReviewLogs
-      .filter((log) => log.applicationId === applicationId)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    account,
-    member: partnerBusinessMembers.find((member) => account && member.accountId === account.id),
-  });
+  const raw = await requestAdminJson<unknown>(`/partner-applications/${encodeURIComponent(applicationId)}`);
+  const detail = toCamelDeep(raw) as PartnerApplicationDetail;
+  partnerApplications = upsertById(partnerApplications, [detail.application]);
+  if (detail.account) partnerAccounts = upsertById(partnerAccounts, [detail.account]);
+  if (detail.member) partnerBusinessMembers = upsertById(partnerBusinessMembers, [detail.member]);
+  applicationReviewLogs = upsertById(applicationReviewLogs, detail.reviewLogs);
+  return clone(detail);
 }
 
 export async function updatePartnerApplicationStatus(
@@ -506,16 +591,16 @@ export async function updatePartnerApplicationStatus(
   status: Exclude<PartnerApplicationStatus, "approved">,
   request: PartnerApplicationDecisionRequest,
 ): Promise<PartnerApplication> {
-  await delay(260);
-  const application = findPartnerApplication(applicationId);
-  ensureApplicationReviewable(application);
-  ensureReviewMemo(request.reviewMemo);
-  application.status = status;
-  application.reviewMemo = request.reviewMemo.trim();
-  application.reviewerName = request.reviewerName ?? "플랫폼 관리자";
-  application.reviewedAt = nowIso();
-  application.updatedAt = application.reviewedAt;
-  addApplicationReviewLog(application.id, application.reviewerName, status, application.reviewMemo);
+  const action = status === "needs_update" ? "needs-update" : "reject";
+  const raw = await requestAdminJson<unknown>(
+    `/partner-applications/${encodeURIComponent(applicationId)}/${action}`,
+    {
+      method: "POST",
+      body: JSON.stringify(toSnakeDeep(request)),
+    },
+  );
+  const application = toCamelDeep(raw) as PartnerApplication;
+  partnerApplications = upsertById(partnerApplications, [application]);
   return clone(application);
 }
 
@@ -523,96 +608,56 @@ export async function approvePartnerApplication(
   applicationId: string,
   request: PartnerApplicationApprovalRequest,
 ): Promise<PartnerApplicationApprovalResult> {
-  await delay(360);
-  const application = findPartnerApplication(applicationId);
-  ensureApplicationReviewable(application);
-  const reviewedAt = nowIso();
-  const businessId = application.businessId ?? `biz-${Date.now()}`;
-  const business = ensureBusinessFromApplication(application, businessId);
-  const expert = ensureExpertFromApplication(application, businessId);
-  const existingAccount = partnerAccounts.find((account) => account.applicationId === application.id);
-  const accountRole: PartnerAccount["role"] = application.partnerType === "freelancer" ? "expert" : "business_manager";
-  const workspaceScope: WorkspaceScope = accountRole === "expert" ? "expert_personal" : request.workspaceScope ?? "business_operations";
-  const account: PartnerAccount = existingAccount ?? {
-    id: `account-${Date.now()}`,
-    applicationId: application.id,
-    businessId,
-    expertId: application.partnerType === "freelancer" ? expert.id : undefined,
-    email: request.accountEmail || application.email,
-    temporaryPassword: createTemporaryPassword(application.businessName),
-    role: accountRole,
-    workspaceScope,
-    status: "invited",
-    passwordChangeRequired: true,
-    createdAt: reviewedAt,
-    deliveredBy: "manual",
-  };
-  const member = ensureBusinessMemberFromAccount(account, expert.id, reviewedAt);
-
-  application.status = "approved";
-  application.businessId = businessId;
-  application.generatedAccountId = account.id;
-  application.reviewMemo = request.reviewMemo || "제출 서류 확인 완료. 파트너 계정 발급 가능.";
-  application.reviewerName = request.reviewerName ?? "플랫폼 관리자";
-  application.reviewedAt = reviewedAt;
-  application.updatedAt = reviewedAt;
-  application.documents = application.documents.map((document) => ({ ...document, reviewStatus: "verified" }));
-
-  if (existingAccount) {
-    Object.assign(existingAccount, account);
-  } else {
-    partnerAccounts = [account, ...partnerAccounts];
-  }
-
-  addApplicationReviewLog(application.id, application.reviewerName, "approved", application.reviewMemo);
-  addApplicationReviewLog(application.id, application.reviewerName, "account_created", `${business.name} 업체, ${expert.name} 전문가, ${account.email} 계정과 ${member.role} 멤버십을 수동 전달용으로 생성했습니다.`);
-
-  return clone({ application, account, member });
+  const raw = await requestAdminJson<unknown>(
+    `/partner-applications/${encodeURIComponent(applicationId)}/approve`,
+    {
+      method: "POST",
+      body: JSON.stringify(toSnakeDeep(request)),
+    },
+  );
+  const result = toCamelDeep(raw) as PartnerApplicationApprovalResult;
+  partnerApplications = upsertById(partnerApplications, [result.application]);
+  partnerAccounts = upsertById(partnerAccounts, [result.account]);
+  partnerBusinessMembers = upsertById(partnerBusinessMembers, [result.member]);
+  return clone(result);
 }
 
 export async function preparePartnerApplicationDocumentAccess(documentId: string): Promise<PartnerDocumentAccessResult> {
-  await delay(180);
-  const document = findPartnerApplicationDocument(documentId);
-  return clone({
-    documentId: document.id,
-    fileName: document.fileName,
-    accessUrl: `mock-presigned-url://${document.storageKey}`,
-    expiresInMinutes: 10,
-  });
+  const raw = await requestAdminJson<unknown>(
+    `/partner-applications/documents/${encodeURIComponent(documentId)}/access`,
+    { method: "POST" },
+  );
+  return clone(toCamelDeep(raw) as PartnerDocumentAccessResult);
 }
 
 export async function getAdminDashboardSummary(): Promise<AdminDashboardSummary> {
-  await delay();
-  const today = todayDate();
-  const todayBookings = bookings.filter((booking) => dateKey(booking.startsAt) === today);
-
-  return clone({
-    pendingApplicationCount: partnerApplications.filter((application) => application.status === "submitted").length,
-    needsUpdateApplicationCount: partnerApplications.filter((application) => application.status === "needs_update").length,
-    approvedBusinessCount: businessProfiles.filter((business) => business.verificationStatus === "approved").length,
-    totalExpertCount: experts.length,
-    todayBookingCount: todayBookings.length,
-    refundRequestCount: bookings.filter((booking) => booking.status === "refund_requested").length,
-    failedSummaryJobCount: consultationSummaryJobs.filter((job) => job.status === "failed").length,
-    hiddenOrReportedReviewCount: reviews.filter((review) => review.status === "hidden" || review.status === "reported").length,
-    recentApplications: [...partnerApplications].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 5),
-    todayBookings: todayBookings.sort((a, b) => a.startsAt.localeCompare(b.startsAt)),
-    summaryJobs: [...consultationSummaryJobs].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 5),
-  });
+  const raw = await requestAdminJson<unknown>("/dashboard");
+  const summary = normalizeAdminDashboardSummary(toCamelDeep(raw) as Partial<AdminDashboardSummary>);
+  rememberBookings(summary.todayBookings);
+  consultationSummaryJobs = upsertById(consultationSummaryJobs, summary.summaryJobs);
+  partnerApplications = upsertById(partnerApplications, summary.recentApplications);
+  return clone(summary);
 }
 
 export async function getAdminBusinesses(): Promise<BusinessProfile[]> {
-  await delay();
-  return clone(businessProfiles);
+  const raw = await requestAdminJson<unknown>("/businesses");
+  const records = toCamelDeep(raw) as BusinessProfile[];
+  businessProfiles = upsertById(businessProfiles, records);
+  return clone(records);
 }
 
 export async function getAdminExperts(): Promise<Expert[]> {
-  await delay();
-  return clone(experts);
+  const raw = await requestAdminJson<unknown>("/experts");
+  const records = toCamelDeep(raw) as Expert[];
+  experts = upsertById(experts, records);
+  return clone(records);
 }
 
 export async function getAdminBookings(filters: BookingFilters = {}): Promise<Booking[]> {
-  return getBookings(filters);
+  const raw = await requestAdminJson<unknown>(buildPartnerPath("/bookings", filters));
+  const records = toCamelDeep(raw) as Booking[];
+  rememberBookings(records);
+  return clone(filterBookings(records, filters));
 }
 
 export async function getDashboardSummary(user?: AuthUser): Promise<DashboardSummary> {
@@ -777,6 +822,61 @@ export async function getBookingDetail(bookingId: string, user?: AuthUser): Prom
   return clone(makeBookingDetail(booking));
 }
 
+export async function saveBookingChanges(bookingId: string, changes: BookingSaveChangesInput, user?: AuthUser): Promise<Booking> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<{ booking: Booking }>(
+      `/bookings/${encodeURIComponent(bookingId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(toSnakeDeep(changes)),
+      },
+    );
+    rememberBookings([data.booking]);
+    return clone(data.booking);
+  }
+
+  await delay();
+  const booking = findBooking(bookingId, user);
+  const effectivePaymentStatus = changes.markPaymentPaid ? "paid" : booking.paymentStatus;
+  if (changes.status && ["confirmed", "scheduled", "in_progress"].includes(changes.status) && effectivePaymentStatus !== "paid") {
+    throw new Error("선결제 또는 예약금 입금 확인 후 전문가가 예약을 확정할 수 있습니다.");
+  }
+
+  if (changes.patch) {
+    Object.assign(booking, changes.patch);
+  }
+  if (changes.markPaymentPaid) {
+    booking.paymentStatus = "paid";
+    if (booking.paidAmount <= 0) {
+      const expert = experts.find((item) => item.id === booking.expertId);
+      booking.paidAmount = booking.durationMinutes === 30 ? expert?.price30Min ?? 0 : expert?.price60Min ?? 0;
+    }
+    if (!changes.status && booking.status === "requested") {
+      booking.status = "contacting";
+    }
+    booking.internalMemo = [
+      booking.internalMemo,
+      "선결제/예약금 입금 확인. 전문가 확정 대기 상태로 전환했습니다.",
+    ].filter(Boolean).join("\n");
+  }
+  if (changes.status) {
+    booking.status = changes.status;
+  }
+  if (changes.cancelReason) {
+    booking.internalMemo = [booking.internalMemo, `취소 사유: ${changes.cancelReason}`].filter(Boolean).join("\n");
+  }
+  if (changes.note) {
+    booking.internalMemo = [booking.internalMemo, changes.note].filter(Boolean).join("\n");
+  }
+  if (booking.status === "completed") {
+    booking.reviewRequestStatus = "ready";
+  }
+  if (booking.status === "cancelled" || booking.status === "no_show") {
+    booking.reviewRequestStatus = "not_ready";
+  }
+  return clone(booking);
+}
+
 export async function updateBookingStatus(bookingId: string, status: BookingStatus, user?: AuthUser): Promise<Booking> {
   if (shouldUsePartnerApi(user)) {
     const data = await requestPartnerJson<{ booking: Booking }>(
@@ -791,6 +891,9 @@ export async function updateBookingStatus(bookingId: string, status: BookingStat
   }
   await delay();
   const booking = findBooking(bookingId, user);
+  if (["confirmed", "scheduled", "in_progress"].includes(status) && booking.paymentStatus !== "paid") {
+    throw new Error("선결제 또는 예약금 입금 확인 후 전문가가 예약을 확정할 수 있습니다.");
+  }
   booking.status = status;
   if (status === "completed") {
     booking.reviewRequestStatus = "ready";
@@ -798,6 +901,32 @@ export async function updateBookingStatus(bookingId: string, status: BookingStat
   if (status === "cancelled" || status === "no_show") {
     booking.reviewRequestStatus = "not_ready";
   }
+  return clone(booking);
+}
+
+export async function markBookingDepositPaid(bookingId: string, user?: AuthUser): Promise<Booking> {
+  if (shouldUsePartnerApi(user)) {
+    const data = await requestPartnerJson<{ booking: Booking }>(
+      `/bookings/${encodeURIComponent(bookingId)}/payment`,
+      { method: "POST" },
+    );
+    rememberBookings([data.booking]);
+    return clone(data.booking);
+  }
+  await delay(180);
+  const booking = findBooking(bookingId, user);
+  booking.paymentStatus = "paid";
+  if (booking.paidAmount <= 0) {
+    const expert = experts.find((item) => item.id === booking.expertId);
+    booking.paidAmount = booking.durationMinutes === 30 ? expert?.price30Min ?? 0 : expert?.price60Min ?? 0;
+  }
+  if (booking.status === "requested") {
+    booking.status = "contacting";
+  }
+  booking.internalMemo = [
+    booking.internalMemo,
+    "선결제/예약금 입금 확인. 전문가 확정 대기 상태로 전환했습니다.",
+  ].filter(Boolean).join("\n");
   return clone(booking);
 }
 
@@ -979,7 +1108,7 @@ export async function uploadChatAttachment(file: File, user?: AuthUser): Promise
   await delay(180);
   const attachment: Attachment = {
     id: `att-chat-${Date.now()}`,
-    ownerId: user?.id ?? "mock-partner",
+    ownerId: user?.id ?? "partner",
     type: "image",
     name: file.name || "chat-image",
     url: URL.createObjectURL(file),
@@ -1048,16 +1177,7 @@ export async function getSharedReportDetail(reportId: string, user?: AuthUser): 
   if (user && !canAccessCustomer(report.customerId, user)) {
     throw new Error("이 리포트를 조회할 수 없습니다.");
   }
-  return clone({
-    report,
-    kind: "analysis" as const,
-    detail: {
-      summary: report.summary,
-      category: report.category,
-      source: report.source,
-      createdAt: report.createdAt,
-    },
-  });
+  return clone(makeSharedReportDetail(report));
 }
 
 export async function getConsultationSummaries(user?: AuthUser): Promise<ConsultationSummary[]> {
@@ -1070,6 +1190,12 @@ export async function getConsultationSummaries(user?: AuthUser): Promise<Consult
 }
 
 export async function getConsultationSummaryJobs(user?: AuthUser): Promise<ConsultationSummaryJob[]> {
+  if (canAccessAllData(user)) {
+    const raw = await requestAdminJson<unknown>("/summary-jobs");
+    const records = toCamelDeep(raw) as ConsultationSummaryJob[];
+    consultationSummaryJobs = upsertById(consultationSummaryJobs, records);
+    return clone([...records].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+  }
   await delay();
   const result = canAccessAllData(user)
     ? consultationSummaryJobs
@@ -1123,7 +1249,7 @@ export async function createConsultationSummary(draft: CompletionDraft, user?: A
     createdAt: nowIso(),
     source: draft.transcript?.trim() ? "phone_ai" : "manual",
     aiStatus: draft.transcript?.trim() ? "succeeded" : "not_requested",
-    aiModel: draft.transcript?.trim() ? "mock-openai-summary" : undefined,
+    aiModel: draft.transcript?.trim() ? "phone-summary" : undefined,
     transcript: draft.transcript,
     internalMemo: draft.internalMemo,
     customerSummary: draft.customerSummary,
@@ -1177,10 +1303,10 @@ export async function generateConsultationSummary(
     bookingId: booking.id,
     businessId: booking.businessId,
     expertId: booking.expertId,
-    requestedBy: user?.accountId ?? user?.id ?? "mock-user",
+    requestedBy: user?.accountId ?? user?.id ?? "current-user",
     status: "processing",
     source: "phone_transcript",
-    aiModel: "mock-openai-summary",
+    aiModel: "phone-summary",
     createdAt: nowIso(),
     updatedAt: nowIso(),
   };
@@ -1188,7 +1314,7 @@ export async function generateConsultationSummary(
 
   if (/fail|실패/i.test(sourceText)) {
     job.status = "failed";
-    job.errorMessage = "OpenAI summary mock failed for retry-path validation.";
+    job.errorMessage = "OpenAI summary generation failed for retry-path validation.";
     job.updatedAt = nowIso();
     throw new Error("AI 요약 생성에 실패했습니다. 상담 메모를 확인한 뒤 다시 시도하세요.");
   }
@@ -1217,6 +1343,8 @@ export async function generateConsultationSummary(
   job.updatedAt = summary.createdAt;
   consultationSummaries = [...consultationSummaries.filter((item) => item.bookingId !== booking.id), summary];
   booking.consultationSummaryId = summary.id;
+  booking.status = "completed";
+  booking.reviewRequestStatus = "ready";
   return clone({ job, summary });
 }
 
@@ -1372,11 +1500,59 @@ export async function updateSettings(patch: Partial<ManagerSettings>): Promise<M
 }
 
 export function getCustomerName(customerId: string) {
-  return customers.find((customer) => customer.id === customerId)?.name ?? "알 수 없는 고객";
+  return customers.find((customer) => customer.id === customerId)?.name ?? customerNameLookup.get(customerId) ?? "알 수 없는 고객";
 }
 
 export function getExpertName(expertId: string) {
-  return experts.find((expert) => expert.id === expertId)?.name ?? "알 수 없는 전문가";
+  return experts.find((expert) => expert.id === expertId)?.name ?? expertNameLookup.get(expertId) ?? "알 수 없는 전문가";
+}
+
+function normalizeAdminDashboardSummary(summary: Partial<AdminDashboardSummary>): AdminDashboardSummary {
+  return {
+    pendingApplicationCount: summary.pendingApplicationCount ?? 0,
+    needsUpdateApplicationCount: summary.needsUpdateApplicationCount ?? 0,
+    approvedBusinessCount: summary.approvedBusinessCount ?? 0,
+    totalExpertCount: summary.totalExpertCount ?? 0,
+    todayBookingCount: summary.todayBookingCount ?? 0,
+    refundRequestCount: summary.refundRequestCount ?? 0,
+    failedSummaryJobCount: summary.failedSummaryJobCount ?? 0,
+    hiddenOrReportedReviewCount: summary.hiddenOrReportedReviewCount ?? 0,
+    recentApplications: summary.recentApplications ?? [],
+    todayBookings: summary.todayBookings ?? [],
+    summaryJobs: summary.summaryJobs ?? [],
+  };
+}
+
+function filterBookings(source: Booking[], filters: BookingFilters = {}) {
+  let result = source;
+  if (filters.status && filters.status !== "all") {
+    result = result.filter((booking) => booking.status === filters.status);
+  }
+  if (filters.expertId) {
+    result = result.filter((booking) => booking.expertId === filters.expertId);
+  }
+  if (filters.dateFrom) {
+    result = result.filter((booking) => dateKey(booking.startsAt) >= filters.dateFrom!);
+  }
+  if (filters.dateTo) {
+    result = result.filter((booking) => dateKey(booking.startsAt) <= filters.dateTo!);
+  }
+  if (filters.query) {
+    const query = filters.query.toLowerCase();
+    result = result.filter((booking) => {
+      const customer = customers.find((item) => item.id === booking.customerId);
+      const expert = experts.find((item) => item.id === booking.expertId);
+      return [booking.type, booking.requestMemo, customer?.name, customer?.phone, expert?.name]
+        .filter(Boolean)
+        .some((value) => value!.toLowerCase().includes(query));
+    });
+  }
+  const sort = filters.sort ?? "startsAtAsc";
+  return [...result].sort((a, b) => {
+    if (sort === "startsAtDesc") return b.startsAt.localeCompare(a.startsAt);
+    if (sort === "createdDesc") return b.requestedAt.localeCompare(a.requestedAt);
+    return a.startsAt.localeCompare(b.startsAt);
+  });
 }
 
 function applyUserScope(source: Booking[], user?: AuthUser) {
@@ -1429,6 +1605,138 @@ function makeChatThreadDetail(thread: ChatThread): ChatThreadDetail {
     expert,
     sharedReports: sharedReports.filter((report) => report.customerId === thread.customerId && (!report.bookingId || report.bookingId === thread.bookingId)),
     messages: chatMessages.filter((message) => message.threadId === thread.id).sort((a, b) => a.sentAt.localeCompare(b.sentAt)),
+  };
+}
+
+function makeSharedReportDetail(report: SharedReport): SharedReportDetail {
+  const reportAttachment = attachments.find((attachment) => report.attachmentIds.includes(attachment.id));
+  const baseDetail = {
+    category: report.category,
+    createdAt: report.createdAt,
+    imageUrl: reportAttachment?.url,
+    shortSummary: report.summary,
+    source: report.source,
+    summary: report.summary,
+  };
+  const templates: Record<string, Record<string, unknown>> = {
+    "report-1": {
+      personalColor: "여름 쿨 라이트 후보",
+      faceShape: "부드러운 계란형, 얼굴 중앙 여백이 균형적인 편",
+      skinType: "수분 부족형 중성",
+      toneSummary: "노란기보다 맑은 핑크 기가 올라올 때 얼굴이 밝아 보입니다.",
+      recommendedMood: "글로우 코랄보다 소프트 로즈, 투명한 광",
+      shootingQuality: "정면 구도 양호, 실내 조명 약간 따뜻함",
+      colorPalette: [
+        { name: "소프트 로즈", hex: "#d98a9d" },
+        { name: "라이트 모브", hex: "#b7a2cf" },
+        { name: "클리어 핑크", hex: "#f2a7bc" },
+      ],
+      keyFindings: [
+        "따뜻한 코랄을 넓게 올리면 얼굴 중심이 붉게 보여 채도를 낮추는 편이 좋습니다.",
+        "광은 T존보다 광대 위쪽에 작게 두면 얼굴 입체감이 살아납니다.",
+        "립은 선명한 레드보다 맑은 로즈 계열이 피부 톤과 안정적으로 맞습니다.",
+      ],
+      actionSteps: [
+        "현재 사용하는 코랄 블러셔와 로즈 블러셔를 상담 중 비교합니다.",
+        "립 채도를 한 단계 낮춘 사진을 앱에 추가해 변화폭을 확인합니다.",
+        "상담 후 3일 동안 같은 베이스에 블러셔 위치만 바꿔 테스트합니다.",
+      ],
+    },
+    "report-2": {
+      personalColor: "쿨 라이트-브라이트 경계",
+      faceShape: "광대 라인이 살아 있는 계란형",
+      skinType: "표면은 보송, 볼 중앙은 붉음",
+      baseMakeupGuide: "베이스는 노란 보정 대신 뉴트럴 핑크 톤업을 얇게 사용",
+      blushGuide: "눈동자 바깥 라인보다 안쪽, 광대 위쪽에 타원형으로 짧게",
+      lipGuide: "코랄 MLBB보다 로즈 핑크, 글로스는 중앙만",
+      browGuide: "눈썹 산을 세우기보다 꼬리 각도만 낮춰 인상을 부드럽게",
+      shootingQuality: "얼굴 프레임은 안정적, 볼 조명만 오른쪽이 강함",
+      colorPalette: [
+        { name: "로즈 베이지", hex: "#c9858d" },
+        { name: "페일 라벤더", hex: "#c9bddf" },
+        { name: "쿨 브라운", hex: "#6f5558" },
+      ],
+      keyFindings: [
+        "블러셔 위치가 낮아 팔자 주변 음영과 겹쳐 피곤해 보일 수 있습니다.",
+        "립 채도는 크게 낮추기보다 색 온도만 차갑게 바꾸는 쪽이 자연스럽습니다.",
+        "눈썹 꼬리 각도가 강해 전체 무드보다 또렷한 인상이 먼저 보입니다.",
+      ],
+      actionSteps: [
+        "상담 전 평소 블러셔 위치가 보이는 정면 사진을 하나 더 첨부합니다.",
+        "립 후보 2개를 손목 발색보다 얼굴 착용 사진으로 비교합니다.",
+        "베이스 제품 호수와 톤업 제품 사용 여부를 채팅으로 남깁니다.",
+      ],
+    },
+    "report-3": {
+      personalColor: "여름 쿨 라이트 우세",
+      faceShape: "이마와 턱 비율이 안정적인 타원형",
+      toneSummary: "회색기가 많은 색보다 맑고 밝은 저채도 색에서 피부가 깨끗해 보입니다.",
+      recommendedMood: "맑은 로즈, 라벤더, 투명한 쉬머",
+      colorPalette: [
+        { name: "라이트 핑크", hex: "#f1a7bf" },
+        { name: "쿨 라일락", hex: "#bba9db" },
+        { name: "소프트 플럼", hex: "#8d668f" },
+      ],
+      keyFindings: [
+        "노란 베이지 섀도보다 라이트 모브 섀도가 눈가를 맑게 만듭니다.",
+        "블랙 아이라인보다 딥 브라운이나 플럼 브라운이 자연스럽습니다.",
+        "화이트 펄은 넓게 쓰기보다 눈 앞머리와 애교살 중앙에만 권장됩니다.",
+      ],
+      actionSteps: [
+        "현재 보유 팔레트에서 라벤더/모브 계열을 상담 중 같이 분류합니다.",
+        "데일리 메이크업은 색보다 면적을 줄이는 방향으로 먼저 조정합니다.",
+      ],
+    },
+    "report-4": {
+      personalColor: "재촬영 필요",
+      faceShape: "얼굴 프레임 누락으로 자동 판정 제한",
+      skinType: "조명 편차로 신뢰도 낮음",
+      toneSummary: "사진에서 얼굴 하단과 헤어라인이 잘려 톤/비율 판단이 제한됩니다.",
+      shootingQuality: "얼굴 프레임 미충족, 상단 조명 과다",
+      recommendedMood: "상담 전 재촬영 후 확정 권장",
+      colorPalette: [
+        { name: "중립 베이스", hex: "#d8c8b8" },
+        { name: "소프트 로즈", hex: "#d9909d" },
+      ],
+      keyFindings: [
+        "현재 사진만으로는 퍼스널 컬러 확정값보다 촬영 오류 안내가 우선입니다.",
+        "상담에서는 재촬영 가이드와 현재 메이크업 문제를 분리해 설명해야 합니다.",
+      ],
+      actionSteps: [
+        "창가 자연광에서 얼굴 전체와 목선이 들어오게 다시 촬영합니다.",
+        "필터, 보정, 그림자 없이 정면 사진을 추가합니다.",
+      ],
+    },
+    "report-5": {
+      personalColor: "여름 쿨 라이트",
+      faceShape: "계란형, 볼 중앙 면적이 넓어 블러셔 면적 조절 중요",
+      baseMakeupGuide: "파운데이션은 얇게, 붉은 볼 중앙은 컨실러보다 그린 베이스 소량",
+      blushGuide: "광대 아래가 아닌 눈 밑 바깥쪽으로 작게 쌓기",
+      lipGuide: "소프트 로즈와 뮤트 핑크를 번갈아 테스트",
+      recommendedMood: "깨끗한 베이스, 작은 블러셔, 투명 로즈 립",
+      colorPalette: [
+        { name: "뮤트 핑크", hex: "#c98999" },
+        { name: "로즈 밀크", hex: "#e1a8b4" },
+        { name: "쿨 토프", hex: "#8b777c" },
+      ],
+      keyFindings: [
+        "붉게 뜨는 원인은 블러셔 색보다 위치와 양이었습니다.",
+        "베이스를 두껍게 덮으면 오히려 볼 중앙 붉음이 늦게 올라옵니다.",
+      ],
+      actionSteps: [
+        "1주일 동안 블러셔 브러시 첫 터치를 광대 위쪽에서 시작합니다.",
+        "립은 기존 채도 유지, 베이스와 블러셔만 먼저 바꿉니다.",
+      ],
+    },
+  };
+
+  return {
+    report,
+    kind: report.source === "expert_result" ? "feedback" : "analysis",
+    detail: {
+      ...baseDetail,
+      ...(templates[report.id] ?? {}),
+    },
   };
 }
 
@@ -1534,7 +1842,7 @@ function ensureBusinessFromApplication(application: PartnerApplication, business
     ownerId: businessId,
     type: "credential",
     name: document.fileName,
-    url: `mock-presigned-url://${document.storageKey}`,
+    url: `backend-document-url://${document.storageKey}`,
     uploadedAt: document.uploadedAt,
   }));
   attachments = [...attachments, ...verificationDocuments];

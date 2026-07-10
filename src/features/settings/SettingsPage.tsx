@@ -226,7 +226,7 @@ export function SettingsPage() {
                 </Field>
                 <Field label="채팅 Provider">
                   <SelectInput value={integrations.chatProvider} onChange={(event) => setSettingsDraft((prev) => ({ ...prev, integrations: { ...integrations, chatProvider: event.target.value as typeof integrations.chatProvider } }))}>
-                    <option value="mock">Mock service</option>
+                    <option value="local_test">로컬 테스트 서비스</option>
                     <option value="websocket">FastAPI WebSocket</option>
                     <option value="firebase">Firebase</option>
                     <option value="sendbird">Sendbird</option>
