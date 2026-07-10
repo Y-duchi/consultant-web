@@ -680,6 +680,20 @@ export async function approvePartnerApplication(
   return clone(result);
 }
 
+export async function reissuePartnerApplicationCredentials(
+  applicationId: string,
+): Promise<PartnerApplicationApprovalResult> {
+  const raw = await requestAdminJson<unknown>(
+    `/partner-applications/${encodeURIComponent(applicationId)}/reissue-credentials`,
+    { method: "POST" },
+  );
+  const result = toCamelDeep(raw) as PartnerApplicationApprovalResult;
+  partnerApplications = upsertById(partnerApplications, [result.application]);
+  partnerAccounts = upsertById(partnerAccounts, [result.account]);
+  partnerBusinessMembers = upsertById(partnerBusinessMembers, [result.member]);
+  return clone(result);
+}
+
 export async function preparePartnerApplicationDocumentAccess(documentId: string): Promise<PartnerDocumentAccessResult> {
   const raw = await requestAdminJson<unknown>(
     `/partner-applications/documents/${encodeURIComponent(documentId)}/access`,

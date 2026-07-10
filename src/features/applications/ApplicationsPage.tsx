@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Eye, FileText, KeyRound, Search, UserCheck, XCircle } from "lucide-react";
+import { CheckCircle2, Copy, Eye, FileText, KeyRound, RefreshCw, Search, XCircle } from "lucide-react";
 import {
   approvePartnerApplication,
   getPartnerApplicationDetail,
   getPartnerApplications,
   preparePartnerApplicationDocumentAccess,
+  reissuePartnerApplicationCredentials,
   updatePartnerApplicationStatus,
   type PartnerApplicationApprovalResult,
   type PartnerDocumentAccessResult,
@@ -37,6 +38,7 @@ export function ApplicationsPage() {
   const [generatedAccount, setGeneratedAccount] = useState<PartnerAccount | null>(null);
   const [generatedMember, setGeneratedMember] = useState<PartnerBusinessMember | null>(null);
   const [documentAccess, setDocumentAccess] = useState<PartnerDocumentAccessResult | null>(null);
+  const [credentialsCopied, setCredentialsCopied] = useState(false);
 
   const applicationsQuery = useQuery({
     queryKey: ["partner-applications", query, status],
@@ -63,6 +65,7 @@ export function ApplicationsPage() {
     setGeneratedAccount(null);
     setGeneratedMember(null);
     setDocumentAccess(null);
+    setCredentialsCopied(false);
   }, [selectedId]);
 
   const refreshApplications = async () => {
@@ -90,9 +93,35 @@ export function ApplicationsPage() {
     onSuccess: async (result: PartnerApplicationApprovalResult) => {
       setGeneratedAccount(result.account);
       setGeneratedMember(result.member);
+      setCredentialsCopied(false);
       await refreshApplications();
     },
   });
+
+  const reissueMutation = useMutation({
+    mutationFn: () => reissuePartnerApplicationCredentials(selectedId!),
+    onSuccess: async (result: PartnerApplicationApprovalResult) => {
+      setGeneratedAccount(result.account);
+      setGeneratedMember(result.member);
+      setCredentialsCopied(false);
+      await refreshApplications();
+    },
+  });
+
+  const copyVisibleCredentials = async () => {
+    if (!visibleAccount?.temporaryPassword) return;
+    await copyText([
+      `로그인 이메일: ${visibleAccount.email}`,
+      `임시 비밀번호: ${visibleAccount.temporaryPassword}`,
+      "첫 로그인 후 새 비밀번호를 설정해 주세요.",
+    ].join("\n"));
+    setCredentialsCopied(true);
+  };
+
+  const reissueCredentials = () => {
+    const confirmed = window.confirm("기존 임시 비밀번호와 로그인 세션이 무효화됩니다. 새 임시 비밀번호를 발급할까요?");
+    if (confirmed) reissueMutation.mutate();
+  };
 
   const applications = applicationsQuery.data ?? [];
   const summary = useMemo(
@@ -356,7 +385,17 @@ export function ApplicationsPage() {
               </Field>
             </section>
 
-            {visibleAccount ? <GeneratedAccountPanel account={visibleAccount} member={visibleMember} /> : null}
+            {visibleAccount ? (
+              <GeneratedAccountPanel
+                account={visibleAccount}
+                member={visibleMember}
+                copied={credentialsCopied}
+                reissuing={reissueMutation.isPending}
+                reissueError={reissueMutation.isError ? reissueMutation.error.message : undefined}
+                onCopy={copyVisibleCredentials}
+                onReissue={reissueCredentials}
+              />
+            ) : null}
 
             <section className="detail-section">
               <h3>심사 로그</h3>
@@ -413,7 +452,24 @@ function formatApplicationPrice(application: PartnerApplication, mode: Consultin
   return `30분 ${formatCurrency(price30Min)} · 60분 ${formatCurrency(price60Min)}`;
 }
 
-function GeneratedAccountPanel({ account, member }: { account: PartnerAccount; member?: PartnerBusinessMember | null }) {
+function GeneratedAccountPanel({
+  account,
+  member,
+  copied,
+  reissuing,
+  reissueError,
+  onCopy,
+  onReissue,
+}: {
+  account: PartnerAccount;
+  member?: PartnerBusinessMember | null;
+  copied: boolean;
+  reissuing: boolean;
+  reissueError?: string;
+  onCopy: () => Promise<void>;
+  onReissue: () => void;
+}) {
+  const hasTemporaryPassword = Boolean(account.temporaryPassword);
   return (
     <section className="detail-section generated-account">
       <div className="section-title-row">
@@ -424,14 +480,46 @@ function GeneratedAccountPanel({ account, member }: { account: PartnerAccount; m
         <KeyRound size={20} />
         <div className="cell-main">
           <strong>{account.email}</strong>
-          <span>임시 비밀번호 {account.temporaryPassword}</span>
+          {hasTemporaryPassword ? (
+            <span className="credential-password">임시 비밀번호 {account.temporaryPassword}</span>
+          ) : (
+            <span>기존 임시 비밀번호는 보안을 위해 다시 표시되지 않습니다.</span>
+          )}
           <span>첫 로그인 후 비밀번호 변경 대상</span>
           {member ? <span>멤버 권한 {member.role} · {workspaceScopeLabel[member.workspaceScope]}</span> : null}
         </div>
-        <UserCheck size={18} />
+        <div className="credential-actions">
+          {hasTemporaryPassword ? (
+            <Button variant="secondary" icon={<Copy size={15} />} onClick={onCopy}>
+              {copied ? "복사 완료" : "계정정보 복사"}
+            </Button>
+          ) : null}
+          <Button variant="secondary" icon={<RefreshCw size={15} />} disabled={reissuing} onClick={onReissue}>
+            {reissuing ? "재발급 중" : "임시 비밀번호 재발급"}
+          </Button>
+        </div>
       </div>
+      {hasTemporaryPassword ? <span className="credential-notice">화면을 닫기 전에 신청자에게 안전하게 전달하세요.</span> : null}
+      {reissueError ? <span className="form-error">{reissueError}</span> : null}
     </section>
   );
+}
+
+async function copyText(value: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) throw new Error("계정정보를 복사하지 못했습니다.");
 }
 
 function reviewLogLabel(action: string) {

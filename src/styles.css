@@ -2426,6 +2426,24 @@ a {
   font-size: 14px;
 }
 
+.credential-password {
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 800;
+}
+
+.credential-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.credential-notice {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 @media (max-width: 1240px) {
   body {
     min-width: 980px;
