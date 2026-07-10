@@ -66,3 +66,8 @@ async def reject_partner_application(application_id: str, payload: PartnerApplic
 @router.post("/{application_id}/approve", response_model=PartnerApplicationApprovalResult)
 async def approve_partner_application(application_id: str, payload: PartnerApplicationApprovalRequest, _admin=Depends(get_admin_principal)):
   return await real_workspace.approve_partner_application(application_id, payload)
+
+
+@router.post("/{application_id}/reissue-credentials", response_model=PartnerApplicationApprovalResult)
+async def reissue_partner_credentials(application_id: str, _admin=Depends(get_admin_principal)):
+  return await real_workspace.reissue_partner_credentials(application_id)

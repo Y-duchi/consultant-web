@@ -108,6 +108,47 @@ class FakeConnection:
     return None
 
 
+class CredentialReissueConnection:
+  def __init__(self):
+    self.application = application_row(
+      status="approved",
+      expert_id="exp-approved",
+      generated_account_id="22222222-2222-2222-2222-222222222222",
+      reviewed_at=datetime.now(timezone.utc),
+    )
+    self.execute_calls: list[tuple[str, tuple]] = []
+    self.fetchrow_calls: list[tuple[str, tuple]] = []
+
+  @asynccontextmanager
+  async def transaction(self):
+    yield
+
+  async def execute(self, query: str, *args):
+    self.execute_calls.append((query, args))
+    return "OK"
+
+  async def fetchrow(self, query: str, *args):
+    self.fetchrow_calls.append((query, args))
+    normalized = " ".join(query.lower().split())
+    if "from consulting_partner_applications" in normalized and "status = 'approved'" in normalized:
+      return self.application
+    if "update consulting_partner_accounts" in normalized:
+      return {
+        "id": "22222222-2222-2222-2222-222222222222",
+        "expert_id": "exp-approved",
+        "email": "approved@example.com",
+        "role": "expert",
+        "workspace_scope": "expert_personal",
+        "status": "invited",
+        "password_change_required": True,
+        "created_at": datetime.now(timezone.utc),
+      }
+    raise AssertionError(f"Unexpected query: {query}")
+
+  async def close(self):
+    return None
+
+
 @pytest.mark.asyncio
 async def test_public_application_is_saved_to_rds(monkeypatch: pytest.MonkeyPatch) -> None:
   connection = FakeConnection()
@@ -175,3 +216,33 @@ async def test_approval_creates_expert_account_and_temporary_password(monkeypatc
   )
   assert any("insert into consulting_experts" in query for query, _ in connection.execute_calls)
   assert any("insert into consulting_expert_durations" in query for query, _ in connection.execute_calls)
+
+
+@pytest.mark.asyncio
+async def test_reissue_partner_credentials_replaces_password_and_revokes_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
+  connection = CredentialReissueConnection()
+
+  async def connect():
+    return connection
+
+  monkeypatch.setattr(real_workspace, "_connect", connect)
+  result = await real_workspace.reissue_partner_credentials("11111111-1111-1111-1111-111111111111")
+
+  assert result["application"]["status"] == "approved"
+  assert result["account"]["status"] == "invited"
+  assert result["account"]["password_change_required"] is True
+  assert result["account"]["delivered_by"] == "manual"
+  PartnerApplicationApprovalResult.model_validate(result)
+
+  account_query, account_args = next(
+    (query, args)
+    for query, args in connection.fetchrow_calls
+    if "update consulting_partner_accounts" in query
+  )
+  assert "password_change_required = true" in account_query
+  assert real_workspace._verify_password(
+    result["account"]["temporary_password"],
+    account_args[2],
+    account_args[1],
+  )
+  assert any("delete from consulting_partner_sessions" in query for query, _ in connection.execute_calls)

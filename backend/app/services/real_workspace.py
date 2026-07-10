@@ -1151,6 +1151,60 @@ async def approve_partner_application(application_id: str, payload: Any) -> dict
     await conn.close()
 
 
+async def reissue_partner_credentials(application_id: str) -> dict[str, Any]:
+  conn = await _connect()
+  temporary_password = secrets.token_urlsafe(24)
+  salt = secrets.token_hex(16)
+  try:
+    await _ensure_partner_onboarding_schema(conn)
+    async with conn.transaction():
+      application = await conn.fetchrow(
+        """
+        select * from consulting_partner_applications
+        where id::text = $1 and status = 'approved' and generated_account_id is not null
+        for update
+        """,
+        application_id,
+      )
+      if application is None:
+        raise HTTPException(status_code=409, detail="재발급 가능한 승인 계정을 찾을 수 없습니다.")
+
+      account = await conn.fetchrow(
+        """
+        update consulting_partner_accounts
+        set password_hash = $2, password_salt = $3,
+            status = 'invited', password_change_required = true, updated_at = now()
+        where id = $1::uuid
+        returning id::text id, expert_id, email::text email, role, workspace_scope,
+                  status, password_change_required, created_at
+        """,
+        application["generated_account_id"],
+        _password_hash(temporary_password, salt),
+        salt,
+      )
+      if account is None:
+        raise HTTPException(status_code=409, detail="재발급할 파트너 계정을 찾을 수 없습니다.")
+
+      await conn.execute("delete from consulting_partner_sessions where account_id::text = $1", account["id"])
+
+    business_id = _business_id_for_expert(account["expert_id"])
+    account_payload = {
+      **dict(account),
+      "application_id": application_id,
+      "business_id": business_id,
+      "temporary_password": temporary_password,
+      "created_at": _iso(account["created_at"]),
+      "delivered_by": "manual",
+    }
+    return {
+      "application": _application_from_row(application),
+      "account": account_payload,
+      "member": _member_payload(account_payload, business_id),
+    }
+  finally:
+    await conn.close()
+
+
 async def decide_partner_application(application_id: str, status: str, payload: Any) -> dict[str, Any]:
   if status not in {"needs_update", "rejected"}:
     raise HTTPException(status_code=422, detail="지원하지 않는 입점 심사 상태입니다.")
