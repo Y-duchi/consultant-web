@@ -275,7 +275,7 @@ async def test_approval_creates_expert_account_and_temporary_password(monkeypatc
 
   assert result["application"]["status"] == "approved"
   assert result["application"]["business_id"].startswith("freelancer:exp_")
-  assert result["account"]["email"] == "approved@example.com"
+  assert result["account"]["email"] == "artist@example.com"
   assert result["account"]["password_change_required"] is True
   assert result["member"]["expert_id"] == result["account"]["expert_id"]
   PartnerApplicationApprovalResult.model_validate(result)
@@ -286,6 +286,7 @@ async def test_approval_creates_expert_account_and_temporary_password(monkeypatc
     if "insert into consulting_partner_accounts" in query
   )
   assert "password_hash" in account_query
+  assert account_args[1] == "artist@example.com"
   assert real_workspace._verify_password(
     result["account"]["temporary_password"],
     account_args[3],

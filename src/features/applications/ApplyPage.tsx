@@ -336,15 +336,12 @@ export function ApplyPage() {
           <div className="document-upload-grid">
             <Field label="사업자등록증 PDF" hint="필수 서류">
               <input className="control" type="file" accept="application/pdf" required onChange={updateFile(setBusinessRegistrationFile)} />
-              <small>{businessRegistrationFileName || "PDF 파일을 선택하세요"}</small>
             </Field>
             <Field label="국가 미용사 면허증 PDF" hint="선택 서류">
               <input className="control" type="file" accept="application/pdf" onChange={updateFile(setBeautyLicenseFile)} />
-              <small>{beautyLicenseFileName || "제출하지 않아도 됩니다"}</small>
             </Field>
             <Field label="추가 자격증 PDF" hint="선택 서류 · 여러 파일 선택 가능">
               <input className="control" type="file" accept="application/pdf" multiple onChange={updateAdditionalFiles} />
-              <small>{additionalCertificateFileNames.length ? additionalCertificateFileNames.join(", ") : "제출하지 않아도 됩니다"}</small>
             </Field>
           </div>
 

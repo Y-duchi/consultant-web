@@ -150,6 +150,46 @@ def _email_html(title: str, paragraphs: list[str], *, code: str | None = None) -
   )
 
 
+def _approval_email_html(*, name: str, email: str, temporary_password: str, login_url: str) -> str:
+  safe_name = escape(name)
+  safe_email = escape(email)
+  safe_password = escape(temporary_password)
+  safe_login_url = escape(login_url, quote=True)
+  return f"""
+  <!doctype html>
+  <html lang="ko">
+    <body style="margin:0;padding:0;background:#f3f6f5;font-family:Arial,'Noto Sans KR',sans-serif;color:#17201f">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3f6f5;padding:32px 16px">
+        <tr><td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background:#ffffff;border:1px solid #dce5e2;border-radius:8px;overflow:hidden">
+            <tr><td style="padding:24px 32px;background:#176c5f;color:#ffffff;font-size:20px;font-weight:700">AURA</td></tr>
+            <tr>
+              <td style="padding:36px 32px">
+                <div style="display:inline-block;margin-bottom:16px;padding:6px 10px;background:#eaf4f1;color:#176c5f;border-radius:4px;font-size:12px;font-weight:700">입점 승인 완료</div>
+                <h1 style="margin:0 0 14px;font-size:26px;line-height:1.35;color:#17201f">파트너 계정이 생성되었습니다</h1>
+                <p style="margin:0 0 24px;font-size:15px;line-height:1.7;color:#4f5f5c">{safe_name}님, AURA 입점 심사가 승인되었습니다. 아래 계정으로 로그인해 파트너 운영을 시작해 주세요.</p>
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 24px;background:#f7f9f8;border:1px solid #dce5e2;border-radius:6px">
+                  <tr><td style="padding:18px 20px 8px;color:#71807d;font-size:12px">로그인 이메일</td></tr>
+                  <tr><td style="padding:0 20px 18px;color:#17201f;font-size:16px;font-weight:700;word-break:break-all">{safe_email}</td></tr>
+                  <tr><td style="padding:18px 20px 8px;border-top:1px solid #dce5e2;color:#71807d;font-size:12px">임시 비밀번호</td></tr>
+                  <tr><td style="padding:0 20px 18px;color:#17201f;font-family:Consolas,monospace;font-size:18px;font-weight:700;word-break:break-all">{safe_password}</td></tr>
+                </table>
+                <table role="presentation" cellspacing="0" cellpadding="0" style="margin:0 0 24px">
+                  <tr><td style="border-radius:6px;background:#176c5f"><a href="{safe_login_url}" style="display:inline-block;padding:14px 22px;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700">파트너 페이지 로그인</a></td></tr>
+                </table>
+                <div style="padding:14px 16px;background:#fff8e8;border-left:3px solid #d99a22;color:#625233;font-size:13px;line-height:1.6">보안을 위해 첫 로그인 후 반드시 새 비밀번호로 변경해 주세요. 임시 비밀번호는 다른 사람에게 전달하지 마세요.</div>
+                <p style="margin:24px 0 0;font-size:12px;line-height:1.6;color:#71807d">버튼이 열리지 않으면 아래 주소를 브라우저에 입력해 주세요.<br><a href="{safe_login_url}" style="color:#176c5f;word-break:break-all">{safe_login_url}</a></p>
+              </td>
+            </tr>
+            <tr><td style="padding:20px 32px;background:#f7f9f8;border-top:1px solid #dce5e2;color:#71807d;font-size:12px;line-height:1.6">문의가 필요하면 이 메일에 회신해 주세요.<br>AURA 파트너팀</td></tr>
+          </table>
+        </td></tr>
+      </table>
+    </body>
+  </html>
+  """
+
+
 async def _ensure_partner_onboarding_schema(conn: asyncpg.Connection) -> None:
   await conn.execute("create extension if not exists pgcrypto")
   await conn.execute("create extension if not exists citext")
@@ -1018,6 +1058,7 @@ async def _deliver_application_email(
   recipient: str,
   subject: str,
   paragraphs: list[str],
+  html_body: str | None = None,
 ) -> Any:
   settings = get_settings()
   if not settings.email_from_address:
@@ -1032,7 +1073,7 @@ async def _deliver_application_email(
       recipient=recipient,
       subject=subject,
       text_body="\n\n".join(paragraphs),
-      html_body=_email_html(subject, paragraphs),
+      html_body=html_body or _email_html(subject, paragraphs),
     )
   except Exception:
     status = "failed"
@@ -1359,7 +1400,7 @@ async def approve_partner_application(application_id: str, payload: Any) -> dict
           index,
         )
 
-      account_email = (payload.account_email or application["email"]).strip().lower()
+      account_email = str(application["email"]).strip().lower()
       role = "expert" if application.get("partner_type") == "freelancer" else "business_manager"
       workspace_scope = "expert_personal" if role == "expert" else "business_operations"
       account = await conn.fetchrow(
@@ -1412,7 +1453,7 @@ async def approve_partner_application(application_id: str, payload: Any) -> dict
       conn,
       application,
       notification_type="approved",
-      recipient=account["email"],
+      recipient=str(application["email"]),
       subject="[AURA] 입점 승인 및 파트너 계정 안내",
       paragraphs=[
         f"{application['name']}님, 입점 심사가 승인되어 파트너 계정이 생성되었습니다.",
@@ -1421,6 +1462,12 @@ async def approve_partner_application(application_id: str, payload: Any) -> dict
         f"로그인: {login_url}",
         "보안을 위해 첫 로그인 직후 새 비밀번호로 변경해 주세요.",
       ],
+      html_body=_approval_email_html(
+        name=str(application["name"]),
+        email=str(account["email"]),
+        temporary_password=temporary_password,
+        login_url=login_url,
+      ),
     )
     business_id = _business_id_for_expert(expert_id)
     account_payload = {
