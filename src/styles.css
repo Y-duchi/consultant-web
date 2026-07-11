@@ -540,6 +540,27 @@ a {
   grid-column: span 2;
 }
 
+.email-verification-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.email-verification-row .button {
+  min-width: 142px;
+}
+
+.verification-success {
+  color: var(--success) !important;
+  font-weight: 700;
+}
+
+.verification-error {
+  color: var(--danger) !important;
+  font-weight: 700;
+}
+
 .table-wrap {
   overflow: auto;
   background: var(--surface);
@@ -2482,6 +2503,39 @@ a {
 }
 
 @media (max-width: 700px) {
+  body {
+    min-width: 0;
+  }
+
+  .login-page {
+    place-items: start center;
+    padding: 12px;
+  }
+
+  .login-panel {
+    padding: 18px;
+  }
+
+  .apply-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .form-grid,
+  .document-upload-grid,
+  .mode-option-grid,
+  .email-verification-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .form-grid .span-2 {
+    grid-column: span 1;
+  }
+
+  .email-verification-row .button {
+    width: 100%;
+  }
+
   .modal-panel.report-viewer-modal {
     top: 2vh;
     width: calc(100vw - 24px);

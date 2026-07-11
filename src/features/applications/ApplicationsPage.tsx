@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Copy, Eye, FileText, KeyRound, RefreshCw, Search, XCircle } from "lucide-react";
+import { CheckCircle2, Copy, Eye, FileText, KeyRound, MailCheck, RefreshCw, Search, XCircle } from "lucide-react";
 import {
   approvePartnerApplication,
   getPartnerApplicationDetail,
@@ -436,6 +436,28 @@ export function ApplicationsPage() {
               </Field>
             </section>
 
+            {selectedApplication.lastEmailNotificationStatus ? (
+              <section className="detail-section">
+                <div className="section-title-row">
+                  <h3>신청자 이메일 안내</h3>
+                  <Badge tone={selectedApplication.lastEmailNotificationStatus === "sent" ? "success" : "danger"}>
+                    {selectedApplication.lastEmailNotificationStatus === "sent" ? "발송 완료" : "발송 실패"}
+                  </Badge>
+                </div>
+                <div className="verification-note">
+                  <MailCheck size={18} />
+                  <div>
+                    <strong>{emailNotificationLabel(selectedApplication.lastEmailNotificationType)}</strong>
+                    <span>
+                      {selectedApplication.lastEmailNotificationStatus === "sent"
+                        ? `${selectedApplication.email} · ${selectedApplication.lastEmailNotificationSentAt ? formatDateTime(selectedApplication.lastEmailNotificationSentAt) : "발송 완료"}`
+                        : selectedApplication.lastEmailNotificationError || "메일 발송 상태를 확인해 주세요."}
+                    </span>
+                  </div>
+                </div>
+              </section>
+            ) : null}
+
             {visibleAccount ? (
               <GeneratedAccountPanel
                 account={visibleAccount}
@@ -476,6 +498,15 @@ function DetailRow({ children, label }: { children: ReactNode; label: string }) 
       <dd>{children}</dd>
     </div>
   );
+}
+
+function emailNotificationLabel(type?: string) {
+  if (type === "submitted") return "접수 확인 메일";
+  if (type === "needs_update") return "보완 요청 메일";
+  if (type === "rejected") return "반려 결과 메일";
+  if (type === "approved") return "승인 및 계정 안내 메일";
+  if (type === "credentials_reissued") return "임시 비밀번호 재발급 메일";
+  return "심사 안내 메일";
 }
 
 function ApplicationDocumentSummary({ documents }: { documents: PartnerApplicationDocument[] }) {

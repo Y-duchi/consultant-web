@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 from calendar import monthrange
 from collections import defaultdict
 from datetime import date
 from datetime import datetime, timedelta, timezone
 import hashlib
+import hmac
+from html import escape
 import json
+import logging
 import secrets
 from typing import Any
 from uuid import uuid4
@@ -14,6 +18,7 @@ import asyncpg
 from fastapi import HTTPException
 
 from app.services.auth import PartnerPrincipal, validate_partner_principal
+from app.services.email import send_email
 from app.services.s3 import create_presigned_download
 from app.settings import get_settings
 
@@ -49,6 +54,7 @@ _CATEGORY_ID_ALIASES = {
   "립컬러": "lipColor",
   "lip": "lipColor",
 }
+logger = logging.getLogger(__name__)
 
 
 def _default_operating_hours() -> list[dict[str, Any]]:
@@ -114,6 +120,36 @@ def _category_ids(values: list[str] | None) -> list[str]:
   return result or ["personalColor"]
 
 
+def _normalized_email(value: str) -> str:
+  email = value.strip().lower()
+  local, separator, domain = email.partition("@")
+  if not separator or not local or "." not in domain or any(character.isspace() for character in email):
+    raise HTTPException(status_code=422, detail="올바른 이메일 주소를 입력해 주세요.")
+  return email
+
+
+def _email_verification_digest(value: str) -> str:
+  secret = get_settings().email_verification_secret
+  if not secret:
+    raise HTTPException(status_code=503, detail="이메일 인증 설정이 완료되지 않았습니다.")
+  return hmac.new(secret.encode("utf-8"), value.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _email_html(title: str, paragraphs: list[str], *, code: str | None = None) -> str:
+  content = "".join(f'<p style="margin:0 0 12px;line-height:1.65;color:#34403e">{escape(text)}</p>' for text in paragraphs)
+  code_block = (
+    f'<div style="margin:22px 0;padding:18px;text-align:center;background:#f1f7f5;border:1px solid #c9ded8;'
+    f'font-size:30px;font-weight:700;letter-spacing:8px;color:#176c5f">{escape(code)}</div>'
+    if code else ""
+  )
+  return (
+    '<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:28px">'
+    f'<h1 style="font-size:22px;margin:0 0 20px;color:#17201f">{escape(title)}</h1>'
+    f'{content}{code_block}'
+    '<p style="margin:24px 0 0;color:#71807d;font-size:12px">AURA 파트너팀</p></div>'
+  )
+
+
 async def _ensure_partner_onboarding_schema(conn: asyncpg.Connection) -> None:
   await conn.execute("create extension if not exists pgcrypto")
   await conn.execute("create extension if not exists citext")
@@ -165,6 +201,29 @@ async def _ensure_partner_onboarding_schema(conn: asyncpg.Connection) -> None:
     )
     """
   )
+  await conn.execute(
+    """
+    create table if not exists consulting_partner_email_verifications (
+      id uuid primary key,
+      email citext not null,
+      code_hash text not null,
+      attempt_count integer not null default 0,
+      expires_at timestamptz not null,
+      verified_at timestamptz,
+      verification_token_hash text,
+      token_expires_at timestamptz,
+      consumed_at timestamptz,
+      created_at timestamptz not null default now(),
+      last_sent_at timestamptz not null default now()
+    )
+    """
+  )
+  await conn.execute(
+    """
+    create index if not exists ix_partner_email_verifications_email_created
+    on consulting_partner_email_verifications (email, created_at desc)
+    """
+  )
   definitions = (
     "add column if not exists partner_type text not null default 'freelancer'",
     "add column if not exists business_registration_number text",
@@ -191,6 +250,10 @@ async def _ensure_partner_onboarding_schema(conn: asyncpg.Connection) -> None:
     "add column if not exists review_memo text",
     "add column if not exists reviewer_name text",
     "add column if not exists generated_account_id uuid",
+    "add column if not exists last_email_notification_type text",
+    "add column if not exists last_email_notification_status text",
+    "add column if not exists last_email_notification_error text",
+    "add column if not exists last_email_notification_sent_at timestamptz",
   )
   for definition in definitions:
     await conn.execute(f"alter table consulting_partner_applications {definition}")
@@ -828,10 +891,196 @@ async def admin_dashboard() -> dict[str, Any]:
     await conn.close()
 
 
+async def request_partner_email_verification(email_value: str) -> dict[str, Any]:
+  settings = get_settings()
+  if not settings.email_configured:
+    raise HTTPException(status_code=503, detail="이메일 인증 설정이 완료되지 않았습니다.")
+
+  email = _normalized_email(email_value)
+  conn = await _connect()
+  verification_id = str(uuid4())
+  code = f"{secrets.randbelow(1_000_000):06d}"
+  now = datetime.now(timezone.utc)
+  expires_at = now + timedelta(minutes=settings.email_verification_code_ttl_minutes)
+  try:
+    await _ensure_partner_onboarding_schema(conn)
+    sent_count = await conn.fetchval(
+      """
+      select count(*) from consulting_partner_email_verifications
+      where email = $1 and created_at > now() - interval '1 hour'
+      """,
+      email,
+    )
+    if _int(sent_count) >= 5:
+      raise HTTPException(status_code=429, detail="인증 메일 요청 횟수를 초과했습니다. 1시간 후 다시 시도해 주세요.")
+
+    latest = await conn.fetchrow(
+      """
+      select last_sent_at from consulting_partner_email_verifications
+      where email = $1 order by created_at desc limit 1
+      """,
+      email,
+    )
+    if latest and latest.get("last_sent_at") and latest["last_sent_at"] > now - timedelta(seconds=60):
+      raise HTTPException(status_code=429, detail="인증 메일은 60초 후 다시 요청할 수 있습니다.")
+
+    await conn.execute(
+      """
+      insert into consulting_partner_email_verifications (id, email, code_hash, expires_at)
+      values ($1::uuid, $2, $3, $4)
+      """,
+      verification_id,
+      email,
+      _email_verification_digest(f"{verification_id}:{code}"),
+      expires_at,
+    )
+    try:
+      await asyncio.to_thread(
+        send_email,
+        settings,
+        recipient=email,
+        subject="[AURA] 입점 신청 이메일 인증 코드",
+        text_body=f"AURA 입점 신청 이메일 인증 코드는 {code}입니다. {settings.email_verification_code_ttl_minutes}분 안에 입력해 주세요.",
+        html_body=_email_html(
+          "입점 신청 이메일 인증",
+          [f"아래 인증 코드를 {settings.email_verification_code_ttl_minutes}분 안에 입력해 주세요.", "본인이 요청하지 않았다면 이 메일을 무시해 주세요."],
+          code=code,
+        ),
+      )
+    except Exception as exc:
+      await conn.execute("delete from consulting_partner_email_verifications where id = $1::uuid", verification_id)
+      logger.exception("Failed to send partner email verification to %s", email)
+      raise HTTPException(status_code=503, detail="인증 메일을 보내지 못했습니다. 잠시 후 다시 시도해 주세요.") from exc
+
+    return {
+      "expires_in_minutes": settings.email_verification_code_ttl_minutes,
+      "resend_after_seconds": 60,
+    }
+  finally:
+    await conn.close()
+
+
+async def confirm_partner_email_verification(email_value: str, code: str) -> dict[str, Any]:
+  settings = get_settings()
+  email = _normalized_email(email_value)
+  conn = await _connect()
+  try:
+    await _ensure_partner_onboarding_schema(conn)
+    async with conn.transaction():
+      verification = await conn.fetchrow(
+        """
+        select * from consulting_partner_email_verifications
+        where email = $1 and consumed_at is null
+        order by created_at desc limit 1 for update
+        """,
+        email,
+      )
+      now = datetime.now(timezone.utc)
+      if verification is None or verification["expires_at"] <= now:
+        raise HTTPException(status_code=422, detail="인증 코드가 만료되었습니다. 새 코드를 요청해 주세요.")
+      if _int(verification.get("attempt_count")) >= 5:
+        raise HTTPException(status_code=429, detail="인증 코드 입력 횟수를 초과했습니다. 새 코드를 요청해 주세요.")
+
+      expected = _email_verification_digest(f"{verification['id']}:{code}")
+      if not secrets.compare_digest(expected, verification["code_hash"]):
+        await conn.execute(
+          "update consulting_partner_email_verifications set attempt_count = attempt_count + 1 where id = $1",
+          verification["id"],
+        )
+        raise HTTPException(status_code=422, detail="인증 코드가 올바르지 않습니다.")
+
+      token = secrets.token_urlsafe(32)
+      token_expires_at = now + timedelta(minutes=settings.email_verification_token_ttl_minutes)
+      await conn.execute(
+        """
+        update consulting_partner_email_verifications
+        set verified_at = $2, verification_token_hash = $3, token_expires_at = $4
+        where id = $1
+        """,
+        verification["id"],
+        now,
+        _email_verification_digest(token),
+        token_expires_at,
+      )
+    return {
+      "verification_token": token,
+      "expires_in_minutes": settings.email_verification_token_ttl_minutes,
+    }
+  finally:
+    await conn.close()
+
+
+async def _deliver_application_email(
+  conn: asyncpg.Connection,
+  application: Any,
+  *,
+  notification_type: str,
+  recipient: str,
+  subject: str,
+  paragraphs: list[str],
+) -> Any:
+  settings = get_settings()
+  if not settings.email_from_address:
+    return application
+
+  status = "sent"
+  error_message = None
+  try:
+    await asyncio.to_thread(
+      send_email,
+      settings,
+      recipient=recipient,
+      subject=subject,
+      text_body="\n\n".join(paragraphs),
+      html_body=_email_html(subject, paragraphs),
+    )
+  except Exception:
+    status = "failed"
+    error_message = "메일 발송에 실패했습니다. ECS 로그에서 SES 권한과 발송 제한을 확인해 주세요."
+    logger.exception("Failed to send %s email for application %s", notification_type, application["id"])
+
+  updated = await conn.fetchrow(
+    """
+    update consulting_partner_applications
+    set last_email_notification_type = $2,
+        last_email_notification_status = $3,
+        last_email_notification_error = $4,
+        last_email_notification_sent_at = case when $3 = 'sent' then now() else null end,
+        updated_at = now()
+    where id = $1
+    returning *
+    """,
+    application["id"],
+    notification_type,
+    status,
+    error_message,
+  )
+  return updated or application
+
+
 async def create_partner_application(payload: Any) -> dict[str, Any]:
   conn = await _connect()
   try:
     await _ensure_partner_onboarding_schema(conn)
+    email = _normalized_email(payload.email)
+    verification = await conn.fetchrow(
+      """
+      update consulting_partner_email_verifications
+      set consumed_at = now()
+      where id = (
+        select id from consulting_partner_email_verifications
+        where email = $1 and verification_token_hash = $2
+          and verified_at is not null and token_expires_at > now() and consumed_at is null
+        order by created_at desc limit 1
+        for update skip locked
+      )
+      returning id
+      """,
+      email,
+      _email_verification_digest(payload.email_verification_token),
+    )
+    if verification is None:
+      raise HTTPException(status_code=422, detail="이메일 인증이 만료되었거나 유효하지 않습니다. 다시 인증해 주세요.")
     categories = _clean_text_list(payload.categories)
     specialties = _clean_text_list(payload.specialties)
     consulting_modes = [
@@ -899,7 +1148,7 @@ async def create_partner_application(payload: Any) -> dict[str, Any]:
         updated_at = now()
       returning *
       """,
-      payload.email.strip().lower(),
+      email,
       payload.owner_name.strip(),
       (payload.specialties[0] if payload.specialties else "뷰티 상담 전문가").strip(),
       payload.business_name.strip(),
@@ -930,6 +1179,17 @@ async def create_partner_application(payload: Any) -> dict[str, Any]:
     )
     if row is None:
       raise HTTPException(status_code=409, detail="이미 파트너 계정이 발급된 이메일입니다.")
+    row = await _deliver_application_email(
+      conn,
+      row,
+      notification_type="submitted",
+      recipient=email,
+      subject="[AURA] 입점 신청이 접수되었습니다",
+      paragraphs=[
+        f"{payload.owner_name.strip()}님, {payload.business_name.strip()} 입점 신청이 정상적으로 접수되었습니다.",
+        "관리자 검토 후 보완 요청, 반려 또는 승인 결과를 이 이메일로 안내해 드립니다.",
+      ],
+    )
     return _application_from_row(row)
   finally:
     await conn.close()
@@ -1147,6 +1407,21 @@ async def approve_partner_application(application_id: str, payload: Any) -> dict
         payload.reviewer_name.strip(),
       )
 
+    login_url = f"{get_settings().frontend_origin.rstrip('/')}/login"
+    application = await _deliver_application_email(
+      conn,
+      application,
+      notification_type="approved",
+      recipient=account["email"],
+      subject="[AURA] 입점 승인 및 파트너 계정 안내",
+      paragraphs=[
+        f"{application['name']}님, 입점 심사가 승인되어 파트너 계정이 생성되었습니다.",
+        f"로그인 이메일: {account['email']}",
+        f"임시 비밀번호: {temporary_password}",
+        f"로그인: {login_url}",
+        "보안을 위해 첫 로그인 직후 새 비밀번호로 변경해 주세요.",
+      ],
+    )
     business_id = _business_id_for_expert(expert_id)
     account_payload = {
       **dict(account),
@@ -1154,7 +1429,7 @@ async def approve_partner_application(application_id: str, payload: Any) -> dict
       "business_id": business_id,
       "temporary_password": temporary_password,
       "created_at": _iso(account["created_at"]),
-      "delivered_by": "manual",
+      "delivered_by": "email" if application.get("last_email_notification_status") == "sent" else "manual",
     }
     return {
       "application": _application_from_row(application),
@@ -1201,6 +1476,21 @@ async def reissue_partner_credentials(application_id: str) -> dict[str, Any]:
 
       await conn.execute("delete from consulting_partner_sessions where account_id::text = $1", account["id"])
 
+    login_url = f"{get_settings().frontend_origin.rstrip('/')}/login"
+    application = await _deliver_application_email(
+      conn,
+      application,
+      notification_type="credentials_reissued",
+      recipient=account["email"],
+      subject="[AURA] 파트너 임시 비밀번호 재발급 안내",
+      paragraphs=[
+        "AURA 파트너 계정의 임시 비밀번호가 재발급되었습니다.",
+        f"로그인 이메일: {account['email']}",
+        f"임시 비밀번호: {temporary_password}",
+        f"로그인: {login_url}",
+        "기존 임시 비밀번호와 로그인 세션은 더 이상 사용할 수 없습니다.",
+      ],
+    )
     business_id = _business_id_for_expert(account["expert_id"])
     account_payload = {
       **dict(account),
@@ -1208,7 +1498,7 @@ async def reissue_partner_credentials(application_id: str) -> dict[str, Any]:
       "business_id": business_id,
       "temporary_password": temporary_password,
       "created_at": _iso(account["created_at"]),
-      "delivered_by": "manual",
+      "delivered_by": "email" if application.get("last_email_notification_status") == "sent" else "manual",
     }
     return {
       "application": _application_from_row(application),
@@ -1241,6 +1531,21 @@ async def decide_partner_application(application_id: str, status: str, payload: 
     )
     if row is None:
       raise HTTPException(status_code=409, detail="검토 가능한 입점 신청을 찾을 수 없습니다.")
+    is_update_request = status == "needs_update"
+    row = await _deliver_application_email(
+      conn,
+      row,
+      notification_type=status,
+      recipient=str(row["email"]),
+      subject="[AURA] 입점 신청 보완 요청" if is_update_request else "[AURA] 입점 심사 결과 안내",
+      paragraphs=[
+        f"{row['name']}님, 입점 신청에 대한 {'보완이 필요합니다.' if is_update_request else '심사 결과 신청이 반려되었습니다.'}",
+        f"관리자 안내: {payload.review_memo.strip()}",
+        "보완 요청인 경우 신청 페이지에서 동일한 이메일을 인증한 뒤 내용을 수정해 다시 제출해 주세요."
+        if is_update_request else
+        "문의가 필요하면 이 메일에 회신해 주세요.",
+      ],
+    )
     return _application_from_row(row)
   finally:
     await conn.close()
@@ -2423,6 +2728,11 @@ def _application_from_row(row: asyncpg.Record) -> dict[str, Any]:
     "review_memo": row.get("review_memo") or row.get("rejection_reason"),
     "business_id": f"freelancer:{row['expert_id']}" if row.get("expert_id") else None,
     "generated_account_id": str(row["generated_account_id"]) if row.get("generated_account_id") else None,
+    "last_email_notification_type": row.get("last_email_notification_type"),
+    "last_email_notification_status": row.get("last_email_notification_status"),
+    "last_email_notification_error": row.get("last_email_notification_error"),
+    "last_email_notification_sent_at": _iso(row["last_email_notification_sent_at"])
+    if row.get("last_email_notification_sent_at") else None,
     "documents": documents,
   }
 

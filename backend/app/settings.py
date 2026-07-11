@@ -40,6 +40,12 @@ class Settings(BaseSettings):
   s3_credentials_prefix: str = "credentials/"
 
   frontend_origin: str = "http://127.0.0.1:5173"
+  email_from_address: str | None = None
+  email_from_name: str = "AURA 파트너팀"
+  email_reply_to_address: str | None = None
+  email_verification_secret: str | None = None
+  email_verification_code_ttl_minutes: int = 10
+  email_verification_token_ttl_minutes: int = 30
   cors_enabled: bool = True
   cors_origins_raw: str = Field(
     default="http://127.0.0.1:5173",
@@ -86,6 +92,10 @@ class Settings(BaseSettings):
   @property
   def s3_configured(self) -> bool:
     return bool(self.s3_bucket_name)
+
+  @property
+  def email_configured(self) -> bool:
+    return bool(self.email_from_address and self.email_verification_secret)
 
   @property
   def effective_chime_region(self) -> str:
