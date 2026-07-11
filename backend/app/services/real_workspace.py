@@ -938,12 +938,36 @@ async def request_partner_email_verification(email_value: str) -> dict[str, Any]
 
   email = _normalized_email(email_value)
   conn = await _connect()
-  verification_id = str(uuid4())
-  code = f"{secrets.randbelow(1_000_000):06d}"
-  now = datetime.now(timezone.utc)
-  expires_at = now + timedelta(minutes=settings.email_verification_code_ttl_minutes)
   try:
     await _ensure_partner_onboarding_schema(conn)
+    existing = await conn.fetchrow(
+      """
+      select case
+        when exists (
+          select 1 from consulting_partner_accounts where email = $1
+        ) then 'approved'
+        else (
+          select status from consulting_partner_applications
+          where email = $1 and status in ('submitted', 'needs_update', 'approved')
+          order by updated_at desc limit 1
+        )
+      end as status
+      """,
+      email,
+    )
+    existing_status = str(existing["status"]) if existing and existing.get("status") else ""
+    conflict_messages = {
+      "approved": "이미 입점 심사가 완료된 계정입니다.",
+      "submitted": "이미 입점 신청이 접수되어 심사 중인 계정입니다.",
+      "needs_update": "이미 보완 요청된 입점 신청이 있습니다.",
+    }
+    if existing_status in conflict_messages:
+      raise HTTPException(status_code=409, detail=conflict_messages[existing_status])
+
+    verification_id = str(uuid4())
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(minutes=settings.email_verification_code_ttl_minutes)
     sent_count = await conn.fetchval(
       """
       select count(*) from consulting_partner_email_verifications

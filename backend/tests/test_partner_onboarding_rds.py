@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.schemas.partner_applications import (
@@ -158,6 +159,25 @@ class CredentialReissueConnection:
     return None
 
 
+class ExistingApplicationVerificationConnection:
+  def __init__(self, status: str):
+    self.status = status
+    self.fetchrow_calls: list[tuple[str, tuple]] = []
+
+  async def execute(self, query: str, *args):
+    return "OK"
+
+  async def fetchrow(self, query: str, *args):
+    self.fetchrow_calls.append((query, args))
+    normalized = " ".join(query.lower().split())
+    if "consulting_partner_accounts" in normalized and "end as status" in normalized:
+      return {"status": self.status}
+    raise AssertionError(f"Unexpected query: {query}")
+
+  async def close(self):
+    return None
+
+
 @pytest.mark.asyncio
 async def test_public_application_is_saved_to_rds(monkeypatch: pytest.MonkeyPatch) -> None:
   connection = FakeConnection()
@@ -199,6 +219,37 @@ async def test_public_application_is_saved_to_rds(monkeypatch: pytest.MonkeyPatc
   )
   assert "insert into consulting_partner_applications" in query
   assert args[10] == ["personalColor"]
+
+
+@pytest.mark.parametrize(
+  ("status", "message"),
+  [
+    ("approved", "이미 입점 심사가 완료된 계정입니다."),
+    ("submitted", "이미 입점 신청이 접수되어 심사 중인 계정입니다."),
+    ("needs_update", "이미 보완 요청된 입점 신청이 있습니다."),
+  ],
+)
+@pytest.mark.asyncio
+async def test_email_verification_rejects_existing_application(
+  monkeypatch: pytest.MonkeyPatch,
+  status: str,
+  message: str,
+) -> None:
+  connection = ExistingApplicationVerificationConnection(status)
+
+  async def connect():
+    return connection
+
+  monkeypatch.setattr(real_workspace, "_connect", connect)
+  monkeypatch.setattr(real_workspace, "get_settings", lambda: SimpleNamespace(email_configured=True))
+
+  with pytest.raises(HTTPException) as exc_info:
+    await real_workspace.request_partner_email_verification("Artist@Example.com")
+
+  error = exc_info.value
+  assert error.status_code == 409
+  assert error.detail == message
+  assert connection.fetchrow_calls[0][1] == ("artist@example.com",)
 
 
 def test_application_requires_only_business_registration_document() -> None:

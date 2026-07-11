@@ -85,6 +85,7 @@ export function ApplyPage() {
     if (!email.trim()) return;
     setSendingVerification(true);
     setEmailVerificationError("");
+    setEmailVerificationMessage("");
     setEmailVerificationToken("");
     try {
       const result = await requestPartnerEmailVerification(email);
