@@ -1696,6 +1696,29 @@ a {
   line-height: 1.45;
 }
 
+.document-summary {
+  align-items: center;
+  display: inline-flex;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.document-summary > span:not(.badge) {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.document-missing {
+  align-items: center;
+  background: var(--surface-muted);
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.document-missing-required {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
 .report-item-button {
   width: 100%;
   text-align: left;

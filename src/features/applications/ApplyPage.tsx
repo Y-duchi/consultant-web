@@ -32,18 +32,15 @@ export function ApplyPage() {
   const [offlineAddress, setOfflineAddress] = useState("서울 성동구 연무장길 8");
   const [offlineDetailAddress, setOfflineDetailAddress] = useState("3층 AURA 상담룸");
   const [offlineLocationNote, setOfflineLocationNote] = useState("성수역 3번 출구 도보 4분, 건물 뒤편 유료 주차 가능");
-  const [businessRegistrationFileName, setBusinessRegistrationFileName] = useState("AURA성수_사업자등록증.pdf");
-  const [beautyLicenseFileName, setBeautyLicenseFileName] = useState("김세아_국가미용사면허증.pdf");
-  const [additionalCertificateFileNames, setAdditionalCertificateFileNames] = useState<string[]>(["퍼스널컬러컨설턴트1급.pdf"]);
+  const [businessRegistrationFileName, setBusinessRegistrationFileName] = useState("");
+  const [beautyLicenseFileName, setBeautyLicenseFileName] = useState("");
+  const [additionalCertificateFileNames, setAdditionalCertificateFileNames] = useState<string[]>([]);
   const [isSubmitting, setSubmitting] = useState(false);
   const [submittedApplication, setSubmittedApplication] = useState<PartnerApplication | null>(null);
   const hasOnlineConsulting = consultingModes.includes("online");
   const hasOfflineConsulting = consultingModes.includes("offline");
 
-  const requiredDocumentsReady = useMemo(
-    () => Boolean(businessRegistrationFileName && beautyLicenseFileName),
-    [beautyLicenseFileName, businessRegistrationFileName],
-  );
+  const requiredDocumentsReady = useMemo(() => Boolean(businessRegistrationFileName.trim()), [businessRegistrationFileName]);
   const canSubmit = requiredDocumentsReady && consultingModes.length > 0 && (!hasOfflineConsulting || offlineAddress.trim().length > 0);
 
   const handleSubmit = async (event: FormEvent) => {
@@ -251,17 +248,17 @@ export function ApplyPage() {
           </div>
 
           <div className="document-upload-grid">
-            <Field label="사업자등록증 PDF">
-              <input className="control" type="file" accept="application/pdf" onChange={updateFileName(setBusinessRegistrationFileName)} />
+            <Field label="사업자등록증 PDF" hint="필수 서류">
+              <input className="control" type="file" accept="application/pdf" required onChange={updateFileName(setBusinessRegistrationFileName)} />
               <small>{businessRegistrationFileName || "PDF 파일을 선택하세요"}</small>
             </Field>
-            <Field label="국가 미용사 면허증 PDF">
+            <Field label="국가 미용사 면허증 PDF" hint="선택 서류">
               <input className="control" type="file" accept="application/pdf" onChange={updateFileName(setBeautyLicenseFileName)} />
-              <small>{beautyLicenseFileName || "PDF 파일을 선택하세요"}</small>
+              <small>{beautyLicenseFileName || "제출하지 않아도 됩니다"}</small>
             </Field>
-            <Field label="추가 자격증 PDF">
+            <Field label="추가 자격증 PDF" hint="선택 서류 · 여러 파일 선택 가능">
               <input className="control" type="file" accept="application/pdf" multiple onChange={updateAdditionalFileNames} />
-              <small>{additionalCertificateFileNames.length ? additionalCertificateFileNames.join(", ") : "선택 사항"}</small>
+              <small>{additionalCertificateFileNames.length ? additionalCertificateFileNames.join(", ") : "제출하지 않아도 됩니다"}</small>
             </Field>
           </div>
 

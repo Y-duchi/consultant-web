@@ -63,7 +63,8 @@ export function LoginPage() {
             <div className="verification-note">
               <FilePlus2 size={18} />
               <div>
-                <strong>사업자등록증과 국가 미용사 면허증 PDF가 필요합니다</strong>
+                <strong>사업자등록증 PDF만 필수로 제출합니다</strong>
+                <span>국가 미용사 면허증과 추가 자격증은 선택 서류입니다.</span>
                 <span>신청 후에는 관리자 검토 상태만 확인할 수 있고, 승인 후 운영 계정이 발급됩니다.</span>
               </div>
             </div>
