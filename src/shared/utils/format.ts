@@ -40,14 +40,14 @@ export const formatCurrency = (amount: number) =>
 
 export const bookingStatusLabel: Record<BookingStatus, string> = {
   requested: "예약 신청",
-  contacting: "채팅/입금 확인",
+  contacting: "예약 신청",
   confirmed: "예약 확정",
-  scheduled: "상담 예정",
-  in_progress: "상담 진행",
+  scheduled: "예약 확정",
+  in_progress: "예약 확정",
   completed: "상담 완료",
   cancelled: "예약 취소",
-  no_show: "노쇼",
-  refund_requested: "환불요청",
+  no_show: "예약 취소",
+  refund_requested: "예약 취소",
 };
 
 export const paymentStatusLabel: Record<PaymentStatus, string> = {

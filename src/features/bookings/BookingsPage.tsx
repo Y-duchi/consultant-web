@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarRange, CheckCircle2, Clock3, MessageSquareText, Mic, MicOff, Phone, Save, Search, Video, VideoOff, XCircle } from "lucide-react";
+import { CalendarRange, CheckCircle2, Clock3, MessageSquareText, Mic, MicOff, Save, Search, Video, VideoOff, XCircle } from "lucide-react";
 import {
   getAvailability,
   getBookingDetail,
@@ -116,8 +116,6 @@ export function BookingsPage() {
     note: "",
   });
   const requestedBookingId = searchParams.get("bookingId")?.trim() ?? "";
-  const requestedCall = searchParams.get("call") === "1";
-  const autoJoinBookingIdRef = useRef<string | null>(null);
 
   const bookingsQuery = useQuery({
     queryKey: ["bookings", query, status, user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
@@ -483,14 +481,6 @@ export function BookingsPage() {
     openBooking(requestedBooking);
   }, [bookings, requestedBookingId, selectedBookingId]);
 
-  useEffect(() => {
-    if (!requestedCall || !selectedDetail || callJoinResult || joinCallMutation.isPending) return;
-    if (autoJoinBookingIdRef.current === selectedDetail.booking.id) return;
-    if (!canJoinVideoCall(selectedDetail.booking)) return;
-    autoJoinBookingIdRef.current = selectedDetail.booking.id;
-    joinCallMutation.mutate(selectedDetail.booking);
-  }, [callJoinResult, joinCallMutation, requestedCall, selectedDetail]);
-
   if (bookingsQuery.isLoading) return <LoadingState label="예약 데이터를 불러오는 중입니다" />;
   if (bookingsQuery.isError) return <ErrorState message={bookingsQuery.error.message} onRetry={() => bookingsQuery.refetch()} />;
   if (settingsQuery.isError) return <ErrorState message={settingsQuery.error.message} onRetry={() => settingsQuery.refetch()} />;
@@ -645,14 +635,6 @@ export function BookingsPage() {
                 onClick={() => navigate(`/workspace/chat?bookingId=${selectedDetail.booking.id}`)}
               >
                 채팅
-              </Button>
-              <Button
-                variant="secondary"
-                icon={<Phone size={16} />}
-                onClick={() => joinCallMutation.mutate(selectedDetail.booking)}
-                disabled={!canJoinVideoCall(selectedDetail.booking) || joinCallMutation.isPending}
-              >
-                {joinCallMutation.isPending ? "입장 준비 중" : "화상 입장"}
               </Button>
               {canOpenCompletion(selectedDetail.booking.status) ? (
                 <Button variant="primary" icon={<CheckCircle2 size={16} />} onClick={() => navigate(`/workspace/completion?bookingId=${selectedDetail.booking.id}`)}>

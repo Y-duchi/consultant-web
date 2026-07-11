@@ -89,12 +89,9 @@ export function CustomersPage() {
           ))}
         </SelectInput>
         <SelectInput value={status} onChange={(event) => setStatus(event.target.value as BookingStatus | "all")} aria-label="최근 예약 상태 필터">
-          <option value="all">전체 예약 상태</option>
+          <option value="all">전체</option>
           <option value="requested">예약 신청</option>
-          <option value="contacting">채팅/입금 확인</option>
           <option value="confirmed">예약 확정</option>
-          <option value="scheduled">상담 예정</option>
-          <option value="in_progress">상담 진행</option>
           <option value="completed">상담 완료</option>
           <option value="cancelled">예약 취소</option>
         </SelectInput>
