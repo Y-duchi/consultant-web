@@ -2350,16 +2350,19 @@ a {
   gap: 12px;
 }
 
+.application-introduction-field {
+  padding-top: 8px;
+}
+
 .application-introduction-field .textarea {
   min-height: 112px;
 }
 
 .document-upload-grid .field {
-  grid-template-rows: 18px 44px 18px;
+  grid-template-rows: 18px 44px;
 }
 
-.document-upload-grid .field > span,
-.document-upload-grid .field > small {
+.document-upload-grid .field > span {
   min-height: 18px;
   display: flex;
   align-items: center;
