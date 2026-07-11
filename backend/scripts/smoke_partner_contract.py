@@ -456,6 +456,7 @@ def main() -> None:
       introduction="개인 전문가 승인 scope smoke.",
       price_30_min=22000,
       price_60_min=40000,
+      business_registration_file_name="freelancer-business.pdf",
     )
   )
   freelancer_approval = partner_applications.approve_application(

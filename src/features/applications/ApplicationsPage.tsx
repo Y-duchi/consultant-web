@@ -25,7 +25,15 @@ import {
   partnerApplicationStatusLabel,
   workspaceScopeLabel,
 } from "../../shared/utils/format";
-import type { ConsultingMode, PartnerApplication, PartnerApplicationStatus, PartnerAccount, PartnerBusinessMember } from "../../types/domain";
+import type {
+  ConsultingMode,
+  PartnerAccount,
+  PartnerApplication,
+  PartnerApplicationDocument,
+  PartnerApplicationDocumentType,
+  PartnerApplicationStatus,
+  PartnerBusinessMember,
+} from "../../types/domain";
 
 const statusOptions: Array<PartnerApplicationStatus | "all"> = ["all", "submitted", "needs_update", "approved", "rejected"];
 
@@ -249,7 +257,9 @@ export function ApplicationsPage() {
                       ) : null}
                     </div>
                   </td>
-                  <td>{application.documents.length}개</td>
+                  <td>
+                    <ApplicationDocumentSummary documents={application.documents} />
+                  </td>
                   <td>{formatDateTime(application.updatedAt)}</td>
                   <td>
                     <div className="row-actions">
@@ -284,7 +294,7 @@ export function ApplicationsPage() {
               <Button
                 variant="danger"
                 icon={<XCircle size={16} />}
-                disabled={isFinalDecision || !hasReviewMemo || decisionMutation.isPending}
+                disabled={isFinalDecision || decisionMutation.isPending}
                 onClick={() => decisionMutation.mutate({ nextStatus: "rejected" })}
               >
                 반려
@@ -343,29 +353,46 @@ export function ApplicationsPage() {
             <section className="detail-section">
               <div className="section-title-row">
                 <h3>제출 서류</h3>
-                <Badge tone="neutral">Private S3</Badge>
+                <ApplicationDocumentSummary documents={selectedApplication.documents} />
               </div>
               <div className="attachment-list">
-                {selectedApplication.documents.map((document) => (
-                  <div className="attachment-item application-document" key={document.id}>
-                    <div className="document-main">
-                      <FileText size={18} />
-                      <div className="cell-main">
-                        <strong>{document.fileName}</strong>
-                        <span>
-                          {partnerApplicationDocumentTypeLabel[document.type]} · {document.sizeLabel}
-                        </span>
+                {getApplicationDocumentRows(selectedApplication.documents).map((item) =>
+                  item.document ? (
+                    <div className="attachment-item application-document" key={item.key}>
+                      <div className="document-main">
+                        <FileText size={18} />
+                        <div className="cell-main">
+                          <strong>{item.document.fileName}</strong>
+                          <span>
+                            {item.label} · {item.required ? "필수" : "선택"} · {item.document.sizeLabel}
+                          </span>
+                        </div>
                       </div>
+                      <div className="row-actions">
+                        <Badge tone={item.required ? "info" : "neutral"}>{item.required ? "필수" : "선택"}</Badge>
+                        <PartnerApplicationDocumentReviewBadge status={item.document.reviewStatus} />
+                        <Button variant="secondary" icon={<Eye size={15} />} onClick={() => openDocument(item.document!.id)}>
+                          열람
+                        </Button>
+                      </div>
+                      {item.document.note ? <p>{item.document.note}</p> : null}
                     </div>
-                    <div className="row-actions">
-                      <PartnerApplicationDocumentReviewBadge status={document.reviewStatus} />
-                      <Button variant="secondary" icon={<Eye size={15} />} onClick={() => openDocument(document.id)}>
-                        열람
-                      </Button>
+                  ) : (
+                    <div
+                      className={`attachment-item application-document document-missing ${item.required ? "document-missing-required" : ""}`}
+                      key={item.key}
+                    >
+                      <div className="document-main">
+                        <FileText size={18} />
+                        <div className="cell-main">
+                          <strong>{item.label}</strong>
+                          <span>{item.required ? "필수 서류가 제출되지 않았습니다" : "선택 서류 미제출"}</span>
+                        </div>
+                      </div>
+                      <Badge tone={item.required ? "danger" : "neutral"}>{item.required ? "필수 누락" : "선택"}</Badge>
                     </div>
-                    {document.note ? <p>{document.note}</p> : null}
-                  </div>
-                ))}
+                  ),
+                )}
               </div>
               {documentAccess ? (
                 <div className="verification-note">
@@ -425,6 +452,44 @@ function DetailRow({ children, label }: { children: ReactNode; label: string }) 
       <dd>{children}</dd>
     </div>
   );
+}
+
+function ApplicationDocumentSummary({ documents }: { documents: PartnerApplicationDocument[] }) {
+  const hasBusinessRegistration = documents.some((document) => document.type === "business_registration");
+  const optionalCount = documents.filter((document) => document.type !== "business_registration").length;
+  return (
+    <div className="document-summary">
+      <Badge tone={hasBusinessRegistration ? "success" : "danger"}>{hasBusinessRegistration ? "필수 제출" : "필수 누락"}</Badge>
+      <span>선택 {optionalCount}개</span>
+    </div>
+  );
+}
+
+function getApplicationDocumentRows(documents: PartnerApplicationDocument[]) {
+  const rows: Array<{
+    key: string;
+    type: PartnerApplicationDocumentType;
+    label: string;
+    required: boolean;
+    document?: PartnerApplicationDocument;
+  }> = [];
+  const definitions: Array<{ type: PartnerApplicationDocumentType; required: boolean }> = [
+    { type: "business_registration", required: true },
+    { type: "beauty_license", required: false },
+    { type: "additional_certificate", required: false },
+  ];
+
+  definitions.forEach(({ type, required }) => {
+    const matchingDocuments = documents.filter((document) => document.type === type);
+    if (matchingDocuments.length === 0) {
+      rows.push({ key: `${type}-missing`, type, label: partnerApplicationDocumentTypeLabel[type], required });
+      return;
+    }
+    matchingDocuments.forEach((document) => {
+      rows.push({ key: document.id, type, label: partnerApplicationDocumentTypeLabel[type], required, document });
+    });
+  });
+  return rows;
 }
 
 function getApplicationConsultingModes(application: PartnerApplication): ConsultingMode[] {

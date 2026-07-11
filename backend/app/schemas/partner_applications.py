@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class PartnerType(str, Enum):
@@ -105,9 +105,17 @@ class PartnerApplicationCreate(BaseModel):
   offline_address: Optional[str] = None
   offline_detail_address: Optional[str] = None
   offline_location_note: Optional[str] = None
-  business_registration_file_name: Optional[str] = None
+  business_registration_file_name: Optional[str] = Field(default=None, validate_default=True)
   beauty_license_file_name: Optional[str] = None
   additional_certificate_file_names: list[str] = []
+
+  @field_validator("business_registration_file_name", mode="before")
+  @classmethod
+  def require_business_registration_document(cls, value):
+    normalized = str(value or "").strip()
+    if not normalized:
+      raise ValueError("사업자등록증 PDF는 필수입니다.")
+    return normalized
 
 
 class PartnerApplicationDecision(BaseModel):

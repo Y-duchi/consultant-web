@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import pytest
+from pydantic import ValidationError
 
 from app.schemas.partner_applications import (
   PartnerApplication,
@@ -167,6 +168,7 @@ async def test_public_application_is_saved_to_rds(monkeypatch: pytest.MonkeyPatc
     categories=["퍼스널컬러"],
     price_30_min=19000,
     price_60_min=34000,
+    business_registration_file_name="사업자등록증.pdf",
   )
 
   application = await real_workspace.create_partner_application(payload)
@@ -177,6 +179,29 @@ async def test_public_application_is_saved_to_rds(monkeypatch: pytest.MonkeyPatc
   query, args = connection.fetchrow_calls[0]
   assert "insert into consulting_partner_applications" in query
   assert args[10] == ["personalColor"]
+
+
+def test_application_requires_only_business_registration_document() -> None:
+  common_payload = {
+    "partner_type": "freelancer",
+    "business_name": "아티스트 스튜디오",
+    "owner_name": "김아티스트",
+    "phone": "010-1234-5678",
+    "email": "artist@example.com",
+    "price_30_min": 19000,
+    "price_60_min": 34000,
+  }
+
+  application = PartnerApplicationCreate(
+    **common_payload,
+    business_registration_file_name="사업자등록증.pdf",
+  )
+  assert application.business_registration_file_name == "사업자등록증.pdf"
+  assert application.beauty_license_file_name is None
+  assert application.additional_certificate_file_names == []
+
+  with pytest.raises(ValidationError, match="사업자등록증 PDF는 필수입니다"):
+    PartnerApplicationCreate(**common_payload)
 
 
 @pytest.mark.asyncio
