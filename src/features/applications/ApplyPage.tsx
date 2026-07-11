@@ -328,7 +328,7 @@ export function ApplyPage() {
                 </Field>
               </>
             ) : null}
-            <Field label="소개 문구" hint="앱 전문가 상세에 노출될 수 있는 문장">
+            <Field className="span-2 application-introduction-field" label="소개 문구" hint="앱 전문가 상세에 노출될 수 있는 문장">
               <TextArea value={introduction} onChange={(event) => setIntroduction(event.target.value)} />
             </Field>
           </div>

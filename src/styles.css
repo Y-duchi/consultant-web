@@ -2340,7 +2340,44 @@ a {
 .document-upload-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
   gap: 12px;
+}
+
+.application-introduction-field .textarea {
+  min-height: 112px;
+}
+
+.document-upload-grid .field {
+  grid-template-rows: 18px 44px 18px;
+}
+
+.document-upload-grid .field > span,
+.document-upload-grid .field > small {
+  min-height: 18px;
+  display: flex;
+  align-items: center;
+  line-height: 18px;
+}
+
+.document-upload-grid input[type="file"] {
+  height: 44px;
+  min-height: 44px;
+  padding: 5px 6px;
+  line-height: 32px;
+}
+
+.document-upload-grid input[type="file"]::file-selector-button {
+  height: 32px;
+  margin-right: 10px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--surface-muted);
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .mode-option-grid {

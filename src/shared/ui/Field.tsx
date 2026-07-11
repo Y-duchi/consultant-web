@@ -1,14 +1,15 @@
 import type { InputHTMLAttributes, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
 
 interface FieldProps {
+  className?: string;
   label: string;
   hint?: string;
   children: React.ReactNode;
 }
 
-export function Field({ children, hint, label }: FieldProps) {
+export function Field({ children, className = "", hint, label }: FieldProps) {
   return (
-    <label className="field">
+    <label className={`field ${className}`.trim()}>
       <span>{label}</span>
       {children}
       {hint ? <small>{hint}</small> : null}
