@@ -100,7 +100,6 @@ export function ApplicationsPage() {
       approvePartnerApplication(selectedId!, {
         reviewMemo: reviewMemo || "제출 서류 확인 완료. 파트너 계정을 생성했습니다.",
         reviewerName: "플랫폼 관리자",
-        accountEmail: selectedApplication?.email,
         workspaceScope: "business_operations",
     }),
     onSuccess: async (result: PartnerApplicationApprovalResult) => {
