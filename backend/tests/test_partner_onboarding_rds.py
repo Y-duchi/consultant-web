@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -41,8 +42,11 @@ def application_row(**overrides):
     "offline_detail_address": None,
     "offline_location_note": None,
     "business_registration_file_name": "사업자등록증.pdf",
+    "business_registration_storage_key": "business-verifications/business.pdf",
     "beauty_license_file_name": "미용사면허증.pdf",
+    "beauty_license_storage_key": "credentials/license.pdf",
     "additional_certificate_file_names": [],
+    "additional_certificate_storage_keys": [],
     "status": "submitted",
     "expert_id": None,
     "rejection_reason": None,
@@ -79,6 +83,8 @@ class FakeConnection:
     self.fetchrow_calls.append((query, args))
     normalized = " ".join(query.lower().split())
     if "insert into consulting_partner_applications" in normalized:
+      return self.application
+    if "select * from consulting_partner_applications where id::text" in normalized:
       return self.application
     if "from consulting_partner_applications" in normalized and "for update" in normalized:
       return self.application
@@ -169,12 +175,14 @@ async def test_public_application_is_saved_to_rds(monkeypatch: pytest.MonkeyPatc
     price_30_min=19000,
     price_60_min=34000,
     business_registration_file_name="사업자등록증.pdf",
+    business_registration_storage_key="business-verifications/business.pdf",
   )
 
   application = await real_workspace.create_partner_application(payload)
 
   assert application["status"] == "submitted"
   assert application["documents"][0]["file_name"] == "사업자등록증.pdf"
+  assert application["documents"][0]["storage_key"] == "business-verifications/business.pdf"
   PartnerApplication.model_validate(application)
   query, args = connection.fetchrow_calls[0]
   assert "insert into consulting_partner_applications" in query
@@ -195,13 +203,44 @@ def test_application_requires_only_business_registration_document() -> None:
   application = PartnerApplicationCreate(
     **common_payload,
     business_registration_file_name="사업자등록증.pdf",
+    business_registration_storage_key="business-verifications/business.pdf",
   )
   assert application.business_registration_file_name == "사업자등록증.pdf"
+  assert application.business_registration_storage_key == "business-verifications/business.pdf"
   assert application.beauty_license_file_name is None
   assert application.additional_certificate_file_names == []
 
   with pytest.raises(ValidationError, match="사업자등록증 PDF는 필수입니다"):
     PartnerApplicationCreate(**common_payload)
+
+  with pytest.raises(ValidationError, match="사업자등록증 파일 업로드를 완료해 주세요"):
+    PartnerApplicationCreate(**common_payload, business_registration_file_name="사업자등록증.pdf")
+
+
+@pytest.mark.asyncio
+async def test_document_access_uses_rds_storage_key(monkeypatch: pytest.MonkeyPatch) -> None:
+  connection = FakeConnection()
+
+  async def connect():
+    return connection
+
+  monkeypatch.setattr(real_workspace, "_connect", connect)
+  monkeypatch.setattr(real_workspace, "get_settings", lambda: SimpleNamespace(s3_configured=True))
+  monkeypatch.setattr(
+    real_workspace,
+    "create_presigned_download",
+    lambda settings, storage_key, file_name: {
+      "access_url": f"https://signed.example/{storage_key}",
+      "expires_in_minutes": 10,
+    },
+  )
+  result = await real_workspace.create_partner_application_document_access(
+    "11111111-1111-1111-1111-111111111111:business_registration:0",
+  )
+
+  assert result["file_name"] == "사업자등록증.pdf"
+  assert result["access_url"] == "https://signed.example/business-verifications/business.pdf"
+  assert result["expires_in_minutes"] == 10
 
 
 @pytest.mark.asyncio

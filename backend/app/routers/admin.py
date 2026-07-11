@@ -13,7 +13,7 @@ from app.schemas.partner_applications import (
   PartnerApplicationStatus,
   PartnerDocumentAccessResult,
 )
-from app.services import partner_applications, real_workspace
+from app.services import real_workspace
 from app.services.auth import get_admin_principal
 
 
@@ -66,7 +66,7 @@ async def reject_admin_partner_application(application_id: str, payload: Partner
 
 @router.post("/partner-applications/documents/{document_id}/access", response_model=PartnerDocumentAccessResult)
 async def create_admin_partner_application_document_access(document_id: str):
-  return partner_applications.create_document_access(document_id)
+  return await real_workspace.create_partner_application_document_access(document_id)
 
 
 def _application_status(application: object) -> str:

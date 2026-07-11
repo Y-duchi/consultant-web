@@ -292,7 +292,9 @@ def main() -> None:
       price_30_min=18000,
       price_60_min=33000,
       business_registration_file_name="rollback-business.pdf",
+      business_registration_storage_key="business-verifications/rollback-business.pdf",
       beauty_license_file_name="rollback-license.pdf",
+      beauty_license_storage_key="credentials/rollback-license.pdf",
     )
   )
   business_count_before_rollback = len(partner_workspace.list_businesses())
@@ -342,7 +344,9 @@ def main() -> None:
       price_30_min=15000,
       price_60_min=28000,
       business_registration_file_name="decision-business.pdf",
+      business_registration_storage_key="business-verifications/decision-business.pdf",
       beauty_license_file_name="decision-license.pdf",
+      beauty_license_storage_key="credentials/decision-license.pdf",
     )
   )
   assert_raises_status(
@@ -457,6 +461,7 @@ def main() -> None:
       price_30_min=22000,
       price_60_min=40000,
       business_registration_file_name="freelancer-business.pdf",
+      business_registration_storage_key="business-verifications/freelancer-business.pdf",
     )
   )
   freelancer_approval = partner_applications.approve_application(
