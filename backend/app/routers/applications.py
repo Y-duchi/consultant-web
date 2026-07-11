@@ -13,6 +13,10 @@ from app.schemas.partner_applications import (
   PartnerApplicationDetail,
   PartnerApplicationStatus,
   PartnerApplicationStatusResult,
+  PartnerEmailVerificationConfirm,
+  PartnerEmailVerificationRequest,
+  PartnerEmailVerificationRequested,
+  PartnerEmailVerificationResult,
   PartnerDocumentAccessResult,
   PartnerDocumentUploadRequest,
 )
@@ -23,6 +27,16 @@ from app.settings import get_settings
 
 
 router = APIRouter()
+
+
+@router.post("/email-verification/request", response_model=PartnerEmailVerificationRequested)
+async def request_partner_email_verification(payload: PartnerEmailVerificationRequest):
+  return await real_workspace.request_partner_email_verification(payload.email)
+
+
+@router.post("/email-verification/confirm", response_model=PartnerEmailVerificationResult)
+async def confirm_partner_email_verification(payload: PartnerEmailVerificationConfirm):
+  return await real_workspace.confirm_partner_email_verification(payload.email, payload.code)
 
 
 @router.get("", response_model=list[PartnerApplication])

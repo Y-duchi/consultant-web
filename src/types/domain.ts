@@ -115,6 +115,10 @@ export interface PartnerApplication {
   reviewMemo?: string;
   businessId?: string;
   generatedAccountId?: string;
+  lastEmailNotificationType?: string;
+  lastEmailNotificationStatus?: "sent" | "failed";
+  lastEmailNotificationError?: string;
+  lastEmailNotificationSentAt?: string;
   documents: PartnerApplicationDocument[];
 }
 

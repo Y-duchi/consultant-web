@@ -82,6 +82,8 @@ class FakeConnection:
   async def fetchrow(self, query: str, *args):
     self.fetchrow_calls.append((query, args))
     normalized = " ".join(query.lower().split())
+    if "update consulting_partner_email_verifications" in normalized:
+      return {"id": "33333333-3333-3333-3333-333333333333"}
     if "insert into consulting_partner_applications" in normalized:
       return self.application
     if "select * from consulting_partner_applications where id::text" in normalized:
@@ -164,12 +166,18 @@ async def test_public_application_is_saved_to_rds(monkeypatch: pytest.MonkeyPatc
     return connection
 
   monkeypatch.setattr(real_workspace, "_connect", connect)
+  monkeypatch.setattr(
+    real_workspace,
+    "get_settings",
+    lambda: SimpleNamespace(email_verification_secret="test-secret", email_from_address=None),
+  )
   payload = PartnerApplicationCreate(
     partner_type="freelancer",
     business_name="아티스트 스튜디오",
     owner_name="김아티스트",
     phone="010-1234-5678",
     email="artist@example.com",
+    email_verification_token="test-verification-token-that-is-long-enough",
     specialties=["퍼스널컬러"],
     categories=["퍼스널컬러"],
     price_30_min=19000,
@@ -184,7 +192,11 @@ async def test_public_application_is_saved_to_rds(monkeypatch: pytest.MonkeyPatc
   assert application["documents"][0]["file_name"] == "사업자등록증.pdf"
   assert application["documents"][0]["storage_key"] == "business-verifications/business.pdf"
   PartnerApplication.model_validate(application)
-  query, args = connection.fetchrow_calls[0]
+  query, args = next(
+    (query, args)
+    for query, args in connection.fetchrow_calls
+    if "insert into consulting_partner_applications" in query
+  )
   assert "insert into consulting_partner_applications" in query
   assert args[10] == ["personalColor"]
 
@@ -196,6 +208,7 @@ def test_application_requires_only_business_registration_document() -> None:
     "owner_name": "김아티스트",
     "phone": "010-1234-5678",
     "email": "artist@example.com",
+    "email_verification_token": "test-verification-token-that-is-long-enough",
     "price_30_min": 19000,
     "price_60_min": 34000,
   }

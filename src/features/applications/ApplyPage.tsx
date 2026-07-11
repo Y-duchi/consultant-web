@@ -1,8 +1,13 @@
 import { useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, FileCheck2, MapPin, Send, ShieldCheck, Video } from "lucide-react";
-import { submitPartnerApplication, uploadPartnerApplicationDocument } from "../../services/api";
+import { ArrowLeft, FileCheck2, MailCheck, MapPin, Send, ShieldCheck, Video } from "lucide-react";
+import {
+  confirmPartnerEmailVerification,
+  requestPartnerEmailVerification,
+  submitPartnerApplication,
+  uploadPartnerApplicationDocument,
+} from "../../services/api";
 import { PartnerApplicationStatusBadge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Field, SelectInput, TextArea, TextInput } from "../../shared/ui/Field";
@@ -20,7 +25,13 @@ export function ApplyPage() {
   const [ownerName, setOwnerName] = useState("김세아");
   const [businessRegistrationNumber, setBusinessRegistrationNumber] = useState("123-45-67890");
   const [phone, setPhone] = useState("02-468-1900");
-  const [email, setEmail] = useState("pending@aura.example");
+  const [email, setEmail] = useState("");
+  const [emailVerificationCode, setEmailVerificationCode] = useState("");
+  const [emailVerificationToken, setEmailVerificationToken] = useState("");
+  const [emailVerificationMessage, setEmailVerificationMessage] = useState("");
+  const [emailVerificationError, setEmailVerificationError] = useState("");
+  const [isSendingVerification, setSendingVerification] = useState(false);
+  const [isConfirmingVerification, setConfirmingVerification] = useState(false);
   const [specialties, setSpecialties] = useState("메이크업, 퍼스널컬러, 웨딩");
   const [categories, setCategories] = useState("퍼스널컬러, 메이크업");
   const [introduction, setIntroduction] = useState("앱 AI 리포트를 함께 보며 바로 따라 할 수 있는 메이크업 처방을 제공합니다.");
@@ -45,7 +56,46 @@ export function ApplyPage() {
   const beautyLicenseFileName = beautyLicenseFile?.name ?? "";
   const additionalCertificateFileNames = additionalCertificateFiles.map((file) => file.name);
   const requiredDocumentsReady = Boolean(businessRegistrationFile);
-  const canSubmit = requiredDocumentsReady && consultingModes.length > 0 && (!hasOfflineConsulting || offlineAddress.trim().length > 0);
+  const canSubmit = Boolean(emailVerificationToken) && requiredDocumentsReady && consultingModes.length > 0 && (!hasOfflineConsulting || offlineAddress.trim().length > 0);
+
+  const updateEmail = (value: string) => {
+    setEmail(value);
+    setEmailVerificationCode("");
+    setEmailVerificationToken("");
+    setEmailVerificationMessage("");
+    setEmailVerificationError("");
+  };
+
+  const sendVerificationCode = async () => {
+    if (!email.trim()) return;
+    setSendingVerification(true);
+    setEmailVerificationError("");
+    setEmailVerificationToken("");
+    try {
+      const result = await requestPartnerEmailVerification(email);
+      setEmailVerificationMessage(`인증 코드를 보냈습니다. ${result.expiresInMinutes}분 안에 입력해 주세요.`);
+    } catch (error) {
+      setEmailVerificationError(error instanceof Error ? error.message : "인증 메일을 보내지 못했습니다.");
+    } finally {
+      setSendingVerification(false);
+    }
+  };
+
+  const confirmVerificationCode = async () => {
+    if (emailVerificationCode.length !== 6) return;
+    setConfirmingVerification(true);
+    setEmailVerificationError("");
+    try {
+      const result = await confirmPartnerEmailVerification(email, emailVerificationCode);
+      setEmailVerificationToken(result.verificationToken);
+      setEmailVerificationMessage("이메일 인증이 완료되었습니다.");
+    } catch (error) {
+      setEmailVerificationToken("");
+      setEmailVerificationError(error instanceof Error ? error.message : "인증 코드를 확인하지 못했습니다.");
+    } finally {
+      setConfirmingVerification(false);
+    }
+  };
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -69,6 +119,7 @@ export function ApplyPage() {
         businessRegistrationNumber,
         phone,
         email,
+        emailVerificationToken,
         specialties: toList(specialties),
         categories: toList(categories),
         introduction,
@@ -142,7 +193,7 @@ export function ApplyPage() {
               <ShieldCheck size={18} />
               <div>
                 <strong>승인 전 업체/전문가 상태</strong>
-                <span>관리자 승인 전에는 예약·고객 운영 메뉴 대신 검토 상태만 확인하게 됩니다.</span>
+                <span>접수 확인과 심사 결과를 인증한 이메일로 안내합니다. 관리자 승인 전에는 검토 상태만 확인할 수 있습니다.</span>
               </div>
             </div>
             <div className="page-actions">
@@ -194,9 +245,25 @@ export function ApplyPage() {
             <Field label="연락처">
               <TextInput value={phone} onChange={(event) => setPhone(event.target.value)} required />
             </Field>
-            <Field label="이메일">
-              <TextInput type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
-            </Field>
+            <div className="field span-2">
+              <span>이메일 인증</span>
+              <div className="email-verification-row">
+                <TextInput type="email" value={email} onChange={(event) => updateEmail(event.target.value)} required disabled={Boolean(emailVerificationToken)} />
+                <Button type="button" variant="secondary" icon={<Send size={16} />} onClick={sendVerificationCode} disabled={!email.trim() || isSendingVerification || Boolean(emailVerificationToken)}>
+                  {isSendingVerification ? "전송 중" : "인증 코드 전송"}
+                </Button>
+              </div>
+              {emailVerificationMessage && !emailVerificationToken ? (
+                <div className="email-verification-row">
+                  <TextInput inputMode="numeric" maxLength={6} value={emailVerificationCode} onChange={(event) => setEmailVerificationCode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="6자리 인증 코드" />
+                  <Button type="button" variant="secondary" icon={<MailCheck size={16} />} onClick={confirmVerificationCode} disabled={emailVerificationCode.length !== 6 || isConfirmingVerification}>
+                    {isConfirmingVerification ? "확인 중" : "인증 확인"}
+                  </Button>
+                </div>
+              ) : null}
+              {emailVerificationMessage ? <small className={emailVerificationToken ? "verification-success" : ""}>{emailVerificationMessage}</small> : null}
+              {emailVerificationError ? <small className="verification-error">{emailVerificationError}</small> : null}
+            </div>
             <Field label="전문 분야" hint="쉼표로 구분">
               <TextInput value={specialties} onChange={(event) => setSpecialties(event.target.value)} />
             </Field>

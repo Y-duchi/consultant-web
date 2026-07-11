@@ -82,7 +82,29 @@ class PartnerApplication(BaseModel):
   review_memo: Optional[str] = None
   business_id: Optional[str] = None
   generated_account_id: Optional[str] = None
+  last_email_notification_type: Optional[str] = None
+  last_email_notification_status: Optional[str] = None
+  last_email_notification_error: Optional[str] = None
+  last_email_notification_sent_at: Optional[str] = None
   documents: list[PartnerApplicationDocument]
+
+
+class PartnerEmailVerificationRequest(BaseModel):
+  email: str = Field(min_length=3, max_length=320)
+
+
+class PartnerEmailVerificationConfirm(PartnerEmailVerificationRequest):
+  code: str = Field(pattern=r"^\d{6}$")
+
+
+class PartnerEmailVerificationRequested(BaseModel):
+  expires_in_minutes: int
+  resend_after_seconds: int
+
+
+class PartnerEmailVerificationResult(BaseModel):
+  verification_token: str
+  expires_in_minutes: int
 
 
 class PartnerApplicationCreate(BaseModel):
@@ -92,6 +114,7 @@ class PartnerApplicationCreate(BaseModel):
   business_registration_number: Optional[str] = None
   phone: str = Field(min_length=1)
   email: str
+  email_verification_token: str = Field(min_length=32)
   specialties: list[str] = []
   categories: list[str] = []
   introduction: str = ""

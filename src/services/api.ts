@@ -439,6 +439,7 @@ export interface PartnerApplicationInput {
   businessRegistrationNumber?: string;
   phone: string;
   email: string;
+  emailVerificationToken: string;
   specialties: string[];
   categories: string[];
   introduction: string;
@@ -458,6 +459,16 @@ export interface PartnerApplicationInput {
   beautyLicenseStorageKey?: string;
   additionalCertificateFileNames?: string[];
   additionalCertificateStorageKeys?: string[];
+}
+
+export interface PartnerEmailVerificationRequested {
+  expiresInMinutes: number;
+  resendAfterSeconds: number;
+}
+
+export interface PartnerEmailVerificationResult {
+  verificationToken: string;
+  expiresInMinutes: number;
 }
 
 export interface PartnerApplicationDetail {
@@ -635,6 +646,22 @@ export async function submitPartnerApplication(input: PartnerApplicationInput): 
   const application = toCamelDeep(raw) as PartnerApplication;
   partnerApplications = upsertById(partnerApplications, [application]);
   return clone(application);
+}
+
+export async function requestPartnerEmailVerification(email: string): Promise<PartnerEmailVerificationRequested> {
+  const raw = await requestPartnerApplicationJson<unknown>("/email-verification/request", {
+    method: "POST",
+    body: JSON.stringify({ email: email.trim() }),
+  });
+  return toCamelDeep(raw) as PartnerEmailVerificationRequested;
+}
+
+export async function confirmPartnerEmailVerification(email: string, code: string): Promise<PartnerEmailVerificationResult> {
+  const raw = await requestPartnerApplicationJson<unknown>("/email-verification/confirm", {
+    method: "POST",
+    body: JSON.stringify({ email: email.trim(), code: code.trim() }),
+  });
+  return toCamelDeep(raw) as PartnerEmailVerificationResult;
 }
 
 export async function uploadPartnerApplicationDocument(file: File, documentType: PartnerApplicationDocumentType): Promise<string> {
