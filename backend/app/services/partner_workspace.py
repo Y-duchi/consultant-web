@@ -446,6 +446,7 @@ def register_approved_partner(application: object, business_id: str) -> dict:
       "name": getattr(application, "business_name"),
       "owner_name": getattr(application, "owner_name"),
       "partner_type": getattr(application, "partner_type"),
+      "address": getattr(application, "offline_address", None) or "",
       "verification_status": "approved",
       "exposure_status": "pending_review",
     }
@@ -463,6 +464,14 @@ def register_approved_partner(application: object, business_id: str) -> dict:
       "categories": list(getattr(application, "categories", [])),
       "price_30_min": getattr(application, "price_30_min"),
       "price_60_min": getattr(application, "price_60_min"),
+      "consulting_modes": [getattr(mode, "value", mode) for mode in getattr(application, "consulting_modes", [])],
+      "online_price_30_min": getattr(application, "online_price_30_min", None),
+      "online_price_60_min": getattr(application, "online_price_60_min", None),
+      "offline_price_30_min": getattr(application, "offline_price_30_min", None),
+      "offline_price_60_min": getattr(application, "offline_price_60_min", None),
+      "offline_address": getattr(application, "offline_address", None),
+      "offline_detail_address": getattr(application, "offline_detail_address", None),
+      "offline_location_note": getattr(application, "offline_location_note", None),
       "exposure_status": "pending_review",
     }
     _experts.insert(0, expert)

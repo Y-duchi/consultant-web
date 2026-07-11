@@ -30,6 +30,11 @@ class PartnerApplicationDocumentReviewStatus(str, Enum):
   rejected = "rejected"
 
 
+class ConsultingMode(str, Enum):
+  online = "online"
+  offline = "offline"
+
+
 class WorkspaceScope(str, Enum):
   expert_personal = "expert_personal"
   business_operations = "business_operations"
@@ -59,8 +64,16 @@ class PartnerApplication(BaseModel):
   specialties: list[str]
   categories: list[str]
   introduction: str
+  consulting_modes: list[ConsultingMode] = Field(default_factory=lambda: [ConsultingMode.online])
   price_30_min: int
   price_60_min: int
+  online_price_30_min: Optional[int] = Field(default=None, ge=0)
+  online_price_60_min: Optional[int] = Field(default=None, ge=0)
+  offline_price_30_min: Optional[int] = Field(default=None, ge=0)
+  offline_price_60_min: Optional[int] = Field(default=None, ge=0)
+  offline_address: Optional[str] = None
+  offline_detail_address: Optional[str] = None
+  offline_location_note: Optional[str] = None
   status: PartnerApplicationStatus
   submitted_at: str
   updated_at: str
@@ -82,8 +95,16 @@ class PartnerApplicationCreate(BaseModel):
   specialties: list[str] = []
   categories: list[str] = []
   introduction: str = ""
+  consulting_modes: list[ConsultingMode] = Field(default_factory=lambda: [ConsultingMode.online])
   price_30_min: int = Field(ge=0)
   price_60_min: int = Field(ge=0)
+  online_price_30_min: Optional[int] = Field(default=None, ge=0)
+  online_price_60_min: Optional[int] = Field(default=None, ge=0)
+  offline_price_30_min: Optional[int] = Field(default=None, ge=0)
+  offline_price_60_min: Optional[int] = Field(default=None, ge=0)
+  offline_address: Optional[str] = None
+  offline_detail_address: Optional[str] = None
+  offline_location_note: Optional[str] = None
   business_registration_file_name: Optional[str] = None
   beauty_license_file_name: Optional[str] = None
   additional_certificate_file_names: list[str] = []

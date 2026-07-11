@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from app.schemas.partner_applications import (
   ApplicationReviewLog,
   BusinessMember,
+  ConsultingMode,
   PartnerAccount,
   PartnerApplication,
   PartnerApplicationApprovalRequest,
@@ -37,6 +38,14 @@ def _make_id(prefix: str) -> str:
   return f"{prefix}-{int(datetime.now(timezone.utc).timestamp() * 1000)}"
 
 
+def _normalized_consulting_modes(modes: list[ConsultingMode]) -> list[ConsultingMode]:
+  normalized: list[ConsultingMode] = []
+  for mode in modes:
+    if mode not in normalized:
+      normalized.append(mode)
+  return normalized or [ConsultingMode.online]
+
+
 _applications: list[PartnerApplication] = [
   PartnerApplication(
     id="app-sample-1",
@@ -49,8 +58,11 @@ _applications: list[PartnerApplication] = [
     specialties=["메이크업", "퍼스널컬러"],
     categories=["퍼스널컬러", "메이크업"],
     introduction="앱 AI 리포트를 함께 보며 바로 따라 할 수 있는 메이크업 처방을 제공합니다.",
+    consulting_modes=[ConsultingMode.online],
     price_30_min=19000,
     price_60_min=34000,
+    online_price_30_min=19000,
+    online_price_60_min=34000,
     status=PartnerApplicationStatus.submitted,
     submitted_at=_now(),
     updated_at=_now(),
@@ -202,6 +214,9 @@ def list_applications(status: PartnerApplicationStatus | str = "all", query: str
           application.business_registration_number or "",
           " ".join(application.specialties),
           " ".join(application.categories),
+          application.offline_address or "",
+          application.offline_detail_address or "",
+          application.offline_location_note or "",
         ]
       ).lower()
     ]
@@ -211,6 +226,17 @@ def list_applications(status: PartnerApplicationStatus | str = "all", query: str
 def create_application(payload: PartnerApplicationCreate) -> PartnerApplication:
   application_id = _make_id("app")
   now = _now()
+  consulting_modes = _normalized_consulting_modes(payload.consulting_modes)
+  has_online = ConsultingMode.online in consulting_modes
+  has_offline = ConsultingMode.offline in consulting_modes
+  online_price_30_min = payload.online_price_30_min if has_online else None
+  online_price_60_min = payload.online_price_60_min if has_online else None
+  offline_price_30_min = payload.offline_price_30_min if has_offline else None
+  offline_price_60_min = payload.offline_price_60_min if has_offline else None
+  if has_offline and not (payload.offline_address or "").strip():
+    raise HTTPException(status_code=422, detail="Offline consulting address is required.")
+  price_30_min = online_price_30_min if has_online and online_price_30_min is not None else offline_price_30_min
+  price_60_min = online_price_60_min if has_online and online_price_60_min is not None else offline_price_60_min
   application = PartnerApplication(
     id=application_id,
     partner_type=payload.partner_type,
@@ -222,8 +248,16 @@ def create_application(payload: PartnerApplicationCreate) -> PartnerApplication:
     specialties=payload.specialties,
     categories=payload.categories,
     introduction=payload.introduction,
-    price_30_min=payload.price_30_min,
-    price_60_min=payload.price_60_min,
+    consulting_modes=consulting_modes,
+    price_30_min=price_30_min if price_30_min is not None else payload.price_30_min,
+    price_60_min=price_60_min if price_60_min is not None else payload.price_60_min,
+    online_price_30_min=online_price_30_min if online_price_30_min is not None else (payload.price_30_min if has_online else None),
+    online_price_60_min=online_price_60_min if online_price_60_min is not None else (payload.price_60_min if has_online else None),
+    offline_price_30_min=offline_price_30_min,
+    offline_price_60_min=offline_price_60_min,
+    offline_address=payload.offline_address.strip() if has_offline and payload.offline_address else None,
+    offline_detail_address=payload.offline_detail_address.strip() if has_offline and payload.offline_detail_address else None,
+    offline_location_note=payload.offline_location_note.strip() if has_offline and payload.offline_location_note else None,
     status=PartnerApplicationStatus.submitted,
     submitted_at=now,
     updated_at=now,

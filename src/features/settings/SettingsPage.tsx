@@ -13,7 +13,10 @@ import type { ManagerSettings, OperatingHours } from "../../types/domain";
 export function SettingsPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const settingsQuery = useQuery({ queryKey: ["settings"], queryFn: getSettings });
+  const settingsQuery = useQuery({
+    queryKey: ["settings", user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
+    queryFn: () => getSettings(user ?? undefined),
+  });
   const businessQuery = useQuery({ queryKey: ["business-profile", user?.businessId], queryFn: () => getBusinessProfile(user ?? undefined) });
   const [settingsDraft, setSettingsDraft] = useState<Partial<ManagerSettings>>({});
   const [policyDraft, setPolicyDraft] = useState({ cancellationPolicy: "", refundPolicy: "" });
@@ -32,7 +35,7 @@ export function SettingsPage() {
   }, [businessQuery.data]);
 
   const settingsMutation = useMutation({
-    mutationFn: () => updateSettings(settingsDraft),
+    mutationFn: () => updateSettings(settingsDraft, user ?? undefined),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings"] }),
   });
   const policyMutation = useMutation({
@@ -65,6 +68,16 @@ export function SettingsPage() {
             </div>
           </div>
           <div className="panel-body settings-section">
+            <Field label="예약 오픈 범위">
+              <SelectInput
+                value={String(settingsDraft.bookingOpenMonths ?? 1)}
+                onChange={(event) => setSettingsDraft((prev) => ({ ...prev, bookingOpenMonths: Number(event.target.value) }))}
+              >
+                <option value="1">1개월</option>
+                <option value="2">2개월</option>
+                <option value="3">3개월</option>
+              </SelectInput>
+            </Field>
             {operatingHours.map((hour) => (
               <OperatingHourRow
                 hour={hour}

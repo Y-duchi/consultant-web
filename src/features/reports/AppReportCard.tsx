@@ -14,6 +14,11 @@ interface AppReportCardProps {
   selected?: boolean;
 }
 
+type ReportImage = {
+  label: string;
+  url: string;
+};
+
 const preferredMetrics: Array<[string, string]> = [
   ["personalColor", "퍼스널 컬러"],
   ["faceShape", "얼굴형"],
@@ -32,13 +37,13 @@ export function AppReportCard({ className = "", compact = false, onClick, report
   const detailQuery = useQuery({
     queryKey: ["app-report-detail", report.id, user?.id, user?.businessId],
     queryFn: () => getSharedReportDetail(report.id, user ?? undefined),
-    enabled: !compact,
+    enabled: true,
   });
   const detail = detailQuery.data?.detail ?? {};
   const palette = getPalette(detail.colorPalette);
   const keyFindings = getStringList(detail.keyFindings);
   const actionSteps = getStringList(detail.actionSteps);
-  const imageUrl = getString(detail.imageUrl);
+  const images = getReportImages(detail);
   const metrics = preferredMetrics
     .map(([key, label]) => ({ label, value: readableReportValue(detail[key]) }))
     .filter((entry) => entry.value)
@@ -70,12 +75,29 @@ export function AppReportCard({ className = "", compact = false, onClick, report
         </Badge>
       </div>
 
-      {compact ? <p className="app-report-summary">{report.summary}</p> : null}
+      {compact ? (
+        <div className="app-report-compact-body">
+          {images[0] ? <img className="app-report-thumbnail" alt={`${report.title} 대표 이미지`} src={images[0].url} /> : null}
+          <div>
+            <p className="app-report-summary">{report.summary}</p>
+            <span className="app-report-open-label">클릭해서 사진과 상세 분석 보기</span>
+          </div>
+        </div>
+      ) : null}
 
       {!compact ? (
         <>
           <div className="app-report-main">
-            {imageUrl ? <img className="app-report-image" alt="" src={imageUrl} /> : null}
+            {images.length > 0 ? (
+              <div className={`app-report-image-grid ${images.length === 1 ? "is-single" : ""}`}>
+                {images.map((image) => (
+                  <figure key={`${image.label}-${image.url}`}>
+                    <img className="app-report-image" alt={`${report.title} ${image.label}`} src={image.url} />
+                    <figcaption>{image.label}</figcaption>
+                  </figure>
+                ))}
+              </div>
+            ) : null}
             <div className="app-report-narrative">
               <span className="app-report-kicker">AI 얼굴 리포트</span>
               <p>{getString(detail.shortSummary) || report.summary}</p>
@@ -134,6 +156,54 @@ export function AppReportCard({ className = "", compact = false, onClick, report
 
 function getString(value: unknown) {
   return typeof value === "string" ? value : "";
+}
+
+function getRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function firstString(...values: unknown[]) {
+  return values.find((value) => typeof value === "string" && value.trim()) as string | undefined;
+}
+
+function getReportImages(detail: Record<string, unknown>): ReportImage[] {
+  const detailPayload = getRecord(detail.detailPayload ?? detail.rawPayload);
+  const request = getRecord(detailPayload.request);
+  const result = getRecord(detailPayload.result);
+  const sourceImageUrl = firstString(
+    detail.sourceImageUrl,
+    detail.originalImageUrl,
+    request.sourceImageUrl,
+    request.imageUrl,
+    detail.imageUrl,
+  );
+  const previewImageUrl = firstString(detail.previewImageUrl);
+  const explicitRecommendations = Array.isArray(detail.recommendedMakeupImages)
+    ? detail.recommendedMakeupImages
+    : [];
+  const recommendedMakeups = Array.isArray(result.recommendedMakeups)
+    ? result.recommendedMakeups
+    : explicitRecommendations;
+  const recommendedImageUrls = recommendedMakeups
+    .map((item) => {
+      if (typeof item === "string") return item;
+      const record = getRecord(item);
+      return firstString(record.imageUrl, record.cdnUrl, record.previewUrl, record.image_url);
+    })
+    .filter(Boolean) as string[];
+
+  const images: ReportImage[] = [];
+  if (sourceImageUrl) images.push({ label: "고객 원본 얼굴", url: sourceImageUrl });
+  if (!sourceImageUrl && previewImageUrl) images.push({ label: "분석 얼굴", url: previewImageUrl });
+  recommendedImageUrls.forEach((url, index) => {
+    if (!images.some((image) => image.url === url)) {
+      images.push({ label: index === 0 ? "AI 추천 메이크업" : `AI 추천 메이크업 ${index + 1}`, url });
+    }
+  });
+  if (images.length === 0 && previewImageUrl) images.push({ label: "분석 얼굴", url: previewImageUrl });
+  return images;
 }
 
 function getStringList(value: unknown) {

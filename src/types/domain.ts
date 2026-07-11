@@ -6,6 +6,7 @@ export type BusinessVerificationStatus = "not_submitted" | "submitted" | "approv
 export type PartnerApplicationStatus = "submitted" | "needs_update" | "approved" | "rejected";
 export type PartnerApplicationDocumentType = "business_registration" | "beauty_license" | "additional_certificate";
 export type PartnerApplicationDocumentReviewStatus = "pending" | "verified" | "rejected";
+export type ConsultingMode = "online" | "offline";
 export type ConsultationSummarySource = "manual" | "phone_ai" | "customer_app" | "expert_result";
 export type ConsultationSummaryAiStatus = "not_requested" | "queued" | "processing" | "succeeded" | "failed";
 
@@ -96,8 +97,16 @@ export interface PartnerApplication {
   specialties: string[];
   categories: string[];
   introduction: string;
+  consultingModes: ConsultingMode[];
   price30Min: number;
   price60Min: number;
+  onlinePrice30Min?: number;
+  onlinePrice60Min?: number;
+  offlinePrice30Min?: number;
+  offlinePrice60Min?: number;
+  offlineAddress?: string;
+  offlineDetailAddress?: string;
+  offlineLocationNote?: string;
   status: PartnerApplicationStatus;
   submittedAt: string;
   updatedAt: string;
@@ -196,6 +205,58 @@ export interface Booking {
   refundRequestId?: string;
   reviewId?: string;
   reviewRequestStatus: "not_ready" | "ready" | "sent" | "reviewed";
+}
+
+export type ConsultingCallLanguageCode = "ko-KR" | "en-US";
+export type ConsultingCallTranscriptionMode = "fixed" | "identify";
+export type ConsultingCallTranscriptionStatus = "disabled" | "stopped" | "starting" | "active" | "stopping" | "failed";
+
+export interface ConsultingCallTranscription {
+  enabled: boolean;
+  translationEnabled: boolean;
+  status: ConsultingCallTranscriptionStatus;
+  mode: ConsultingCallTranscriptionMode;
+  languageCode?: ConsultingCallLanguageCode | null;
+  customerLanguageCode?: ConsultingCallLanguageCode | null;
+  expertLanguageCode?: ConsultingCallLanguageCode | null;
+}
+
+export interface ConsultingCallState {
+  callSessionId: string | null;
+  bookingId: string;
+  provider: "chime";
+  providerMeetingId?: string | null;
+  mediaRegion?: string | null;
+  status: "not_started" | "created" | "active" | "ended" | "failed";
+  startedAt?: string | null;
+  endedAt?: string | null;
+  chimeEnabled: boolean;
+  transcription: ConsultingCallTranscription;
+}
+
+export interface ConsultingCallJoinResult {
+  callSessionId: string;
+  bookingId: string;
+  participantType?: "user" | "expert";
+  participantLanguageCode?: ConsultingCallLanguageCode;
+  supportedLanguageCodes?: ConsultingCallLanguageCode[];
+  participant: {
+    id: string;
+    type: "customer" | "partner";
+    languageCode: ConsultingCallLanguageCode;
+  };
+  meeting: Record<string, unknown>;
+  attendee: Record<string, unknown>;
+  transcription: ConsultingCallTranscription;
+  transcriptionStatus?: ConsultingCallTranscriptionStatus;
+  transcriptionMode?: ConsultingCallTranscriptionMode;
+}
+
+export interface ConsultingCaptionTranslation {
+  resultId: string;
+  sourceLanguageCode: ConsultingCallLanguageCode;
+  targetLanguageCode: "ko" | "en";
+  translatedContent: string;
 }
 
 export interface AvailabilitySlot {
@@ -361,6 +422,7 @@ export interface UrgentTask {
 export interface ManagerSettings {
   operatingHours: OperatingHours[];
   holidays: string[];
+  bookingOpenMonths: number;
   notification: {
     bookingCreated: boolean;
     bookingReminder: boolean;

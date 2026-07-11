@@ -22,7 +22,12 @@ router = APIRouter(dependencies=[Depends(get_admin_principal)])
 
 @router.get("/dashboard")
 async def get_admin_dashboard():
-  return await real_workspace.admin_dashboard()
+  summary = await real_workspace.admin_dashboard()
+  applications = await real_workspace.list_partner_applications(status="all")
+  summary["pending_application_count"] = len([application for application in applications if _application_status(application) == "submitted"])
+  summary["needs_update_application_count"] = len([application for application in applications if _application_status(application) == "needs_update"])
+  summary["recent_applications"] = applications[:5]
+  return summary
 
 
 @router.get("/partner-applications", response_model=list[PartnerApplication])
@@ -36,27 +41,39 @@ async def list_admin_partner_applications(
 
 @router.get("/partner-applications/{application_id}", response_model=PartnerApplicationDetail)
 async def get_admin_partner_application(application_id: str):
-  return partner_applications.get_application_detail(application_id)
+  return await real_workspace.get_partner_application_detail(application_id)
 
 
 @router.post("/partner-applications/{application_id}/approve", response_model=PartnerApplicationApprovalResult)
 async def approve_admin_partner_application(application_id: str, payload: PartnerApplicationApprovalRequest):
-  return partner_applications.approve_application(application_id, payload)
+  return await real_workspace.approve_partner_application(application_id, payload)
+
+
+@router.post("/partner-applications/{application_id}/reissue-credentials", response_model=PartnerApplicationApprovalResult)
+async def reissue_admin_partner_credentials(application_id: str):
+  return await real_workspace.reissue_partner_credentials(application_id)
 
 
 @router.post("/partner-applications/{application_id}/needs-update", response_model=PartnerApplication)
 async def request_admin_partner_application_update(application_id: str, payload: PartnerApplicationDecision):
-  return partner_applications.request_update(application_id, payload)
+  return await real_workspace.decide_partner_application(application_id, "needs_update", payload)
 
 
 @router.post("/partner-applications/{application_id}/reject", response_model=PartnerApplication)
 async def reject_admin_partner_application(application_id: str, payload: PartnerApplicationDecision):
-  return partner_applications.reject_application(application_id, payload)
+  return await real_workspace.decide_partner_application(application_id, "rejected", payload)
 
 
 @router.post("/partner-applications/documents/{document_id}/access", response_model=PartnerDocumentAccessResult)
 async def create_admin_partner_application_document_access(document_id: str):
   return partner_applications.create_document_access(document_id)
+
+
+def _application_status(application: object) -> str:
+  if isinstance(application, dict):
+    return str(application.get("status") or "")
+  status = getattr(application, "status", "")
+  return str(getattr(status, "value", status))
 
 
 @router.get("/businesses")
