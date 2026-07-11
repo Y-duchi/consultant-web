@@ -202,6 +202,7 @@ async def _ensure_partner_onboarding_schema(conn: asyncpg.Connection) -> None:
 async def _ensure_expert_schedule_columns(conn: asyncpg.Connection) -> None:
   await conn.execute("alter table consulting_experts add column if not exists operating_hours jsonb")
   await conn.execute("alter table consulting_experts add column if not exists holiday_dates jsonb")
+  await conn.execute("alter table consulting_experts add column if not exists temporary_booking_blocks jsonb")
   await conn.execute(
     f"alter table consulting_experts add column if not exists booking_open_months integer not null default {_DEFAULT_BOOKING_OPEN_MONTHS}"
   )
@@ -366,6 +367,40 @@ def _normalize_holidays(value: Any) -> list[str]:
     if normalized not in holidays:
       holidays.append(normalized)
   return sorted(holidays)
+
+
+def _normalize_temporary_booking_blocks(value: Any) -> list[dict[str, str]]:
+  """Validate date-bound closures without turning them into weekly operating hours."""
+  blocks: list[dict[str, str]] = []
+  seen: set[tuple[str, str, str]] = set()
+  for raw_block in _list(value):
+    if not isinstance(raw_block, dict):
+      continue
+    raw_date = str(_payload_get(raw_block, "date") or "").strip()
+    try:
+      block_date = datetime.fromisoformat(raw_date).date().isoformat()
+    except ValueError as exc:
+      raise HTTPException(status_code=422, detail="일회성 예약 차단일은 YYYY-MM-DD 형식이어야 합니다.") from exc
+
+    starts_at = str(_payload_get(raw_block, "starts_at", "startsAt") or "").strip()
+    ends_at = str(_payload_get(raw_block, "ends_at", "endsAt") or "").strip()
+    if _time_to_minutes(starts_at, field_name="temporary block starts_at") >= _time_to_minutes(ends_at, field_name="temporary block ends_at"):
+      raise HTTPException(status_code=422, detail="일회성 예약 차단 종료 시간은 시작 시간 이후여야 합니다.")
+
+    key = (block_date, starts_at, ends_at)
+    if key in seen:
+      continue
+    seen.add(key)
+    block_id = str(_payload_get(raw_block, "id") or "").strip() or str(uuid4())
+    reason = str(_payload_get(raw_block, "reason") or "").strip()
+    blocks.append({
+      "id": block_id,
+      "date": block_date,
+      "starts_at": starts_at,
+      "ends_at": ends_at,
+      "reason": reason,
+    })
+  return sorted(blocks, key=lambda block: (block["date"], block["starts_at"], block["ends_at"]))
 
 
 def _normalize_booking_open_months(value: Any) -> int:
@@ -672,13 +707,16 @@ def _schedule_settings_from_row(row: asyncpg.Record | None) -> dict[str, Any]:
     return {
       "operating_hours": _default_operating_hours(),
       "holidays": [],
+      "temporary_booking_blocks": [],
       "booking_open_months": _DEFAULT_BOOKING_OPEN_MONTHS,
     }
   stored_hours = _json(row["operating_hours"], [])
   stored_holidays = _json(row["holiday_dates"], [])
+  stored_temporary_blocks = _json(row["temporary_booking_blocks"], [])
   return {
     "operating_hours": _normalize_operating_hours(stored_hours) if stored_hours else _default_operating_hours(),
     "holidays": _normalize_holidays(stored_holidays),
+    "temporary_booking_blocks": _normalize_temporary_booking_blocks(stored_temporary_blocks),
     "booking_open_months": _normalize_booking_open_months(row["booking_open_months"]),
   }
 
@@ -689,7 +727,7 @@ async def get_expert_schedule_settings(expert_id: str) -> dict[str, Any]:
     await _ensure_expert_schedule_columns(conn)
     row = await conn.fetchrow(
       """
-      select operating_hours, holiday_dates, booking_open_months
+      select operating_hours, holiday_dates, temporary_booking_blocks, booking_open_months
       from consulting_experts
       where id = $1
       """,
@@ -732,10 +770,12 @@ async def update_partner_settings(payload: dict[str, Any], principal: PartnerPri
   current = await get_expert_schedule_settings(principal.expert_id)
   raw_hours = _payload_get(payload, "operating_hours", "operatingHours")
   raw_holidays = _payload_get(payload, "holidays")
+  raw_temporary_blocks = _payload_get(payload, "temporary_booking_blocks", "temporaryBookingBlocks")
   raw_open_months = _payload_get(payload, "booking_open_months", "bookingOpenMonths")
 
   operating_hours = _normalize_operating_hours(raw_hours) if raw_hours is not None else current["operating_hours"]
   holidays = _normalize_holidays(raw_holidays) if raw_holidays is not None else current["holidays"]
+  temporary_booking_blocks = _normalize_temporary_booking_blocks(raw_temporary_blocks) if raw_temporary_blocks is not None else current["temporary_booking_blocks"]
   booking_open_months = _normalize_booking_open_months(raw_open_months) if raw_open_months is not None else current["booking_open_months"]
 
   conn = await _connect()
@@ -746,13 +786,15 @@ async def update_partner_settings(payload: dict[str, Any], principal: PartnerPri
       update consulting_experts
       set operating_hours = $2::jsonb,
           holiday_dates = $3::jsonb,
-          booking_open_months = $4,
+          temporary_booking_blocks = $4::jsonb,
+          booking_open_months = $5,
           updated_at = now()
       where id = $1
       """,
       principal.expert_id,
       json.dumps(operating_hours, ensure_ascii=False),
       json.dumps(holidays, ensure_ascii=False),
+      json.dumps(temporary_booking_blocks, ensure_ascii=False),
       booking_open_months,
     )
   finally:
@@ -779,6 +821,14 @@ async def assert_booking_time_allowed(expert_id: str, starts_at: datetime, durat
 
   start_minutes = local_starts_at.hour * 60 + local_starts_at.minute
   end_minutes = start_minutes + duration_minutes
+  for block in settings.get("temporary_booking_blocks", []):
+    if block["date"] != local_date.isoformat():
+      continue
+    block_start = _time_to_minutes(block["starts_at"], field_name="temporary block starts_at")
+    block_end = _time_to_minutes(block["ends_at"], field_name="temporary block ends_at")
+    if start_minutes < block_end and end_minutes > block_start:
+      detail = f" ({block['reason']})" if block.get("reason") else ""
+      raise HTTPException(status_code=422, detail=f"설정된 일회성 예약 차단 시간({block['starts_at']}-{block['ends_at']})에는 예약을 열 수 없습니다.{detail}")
   opens_at = _time_to_minutes(hour["opens_at"], field_name="opens_at")
   closes_at = _time_to_minutes(hour["closes_at"], field_name="closes_at")
   if start_minutes < opens_at or end_minutes > closes_at:
@@ -1731,12 +1781,41 @@ async def get_chat_thread_detail(thread_id: str, principal: PartnerPrincipal) ->
   }
 
 
+async def mark_chat_thread_read(thread_id: str, principal: PartnerPrincipal) -> dict[str, Any]:
+  booking_id = thread_id.removeprefix("thread-")
+  booking = await get_partner_booking(booking_id, principal)
+  conn = await _connect()
+  try:
+    await conn.execute(
+      """
+      update consulting_bookings
+      set expert_read_at = now(), updated_at = now()
+      where id::text = $1 and expert_id = $2
+      """,
+      booking_id,
+      principal.expert_id,
+    )
+  finally:
+    await conn.close()
+  return await get_chat_thread_detail(thread_id, principal)
+
+
 async def _thread_from_booking(booking: dict[str, Any]) -> dict[str, Any]:
   conn = await _connect()
   try:
-    last_message_at = await conn.fetchval(
-      "select max(created_at) from consulting_messages where booking_id::text = $1",
+    last_message_at, unread_count = await conn.fetchrow(
+      """
+      select
+        max(created_at) as last_message_at,
+        count(*) filter (
+          where m.sender_type = 'user'
+            and ($2::timestamptz is null or m.created_at > $2::timestamptz)
+        )::int as unread_count
+      from consulting_messages m
+      where m.booking_id::text = $1 and m.deleted_at is null
+      """,
       booking["id"],
+      _parse_iso_datetime(booking["expert_read_at"]) if booking.get("expert_read_at") else None,
     )
   finally:
     await conn.close()
@@ -1749,7 +1828,7 @@ async def _thread_from_booking(booking: dict[str, Any]) -> dict[str, Any]:
     "booking_id": booking["id"],
     "assigned_expert_id": booking["expert_id"],
     "last_message_at": _iso(last_message_at) if last_message_at else booking["requested_at"],
-    "unread_count": 0,
+    "unread_count": int(unread_count or 0),
     "status": status,
     "channel": "app_chat",
   }
@@ -2176,9 +2255,11 @@ def _booking_from_row(row: asyncpg.Record) -> dict[str, Any]:
     "discount_amount": 0,
     "channel": "offline" if row["session_mode"] == "offline" else "video",
     "requested_at": _iso(row["created_at"]),
+    "expert_read_at": _iso(row["expert_read_at"]) if row["expert_read_at"] else None,
     "request_memo": row["question"] or row["concern_label"] or "",
     "selected_concern_tags": [row["concern_label"]] if row["concern_label"] else [],
     "internal_memo": operator_note,
+    "customer_notice": _customer_notice(status),
     "shared_report_ids": [str(item) for item in _list(row["shared_report_ids"])],
     "consultation_summary_id": row["summary_id"],
     "review_request_status": "ready" if status == "completed" else "not_ready",
@@ -2189,6 +2270,21 @@ def _booking_from_row(row: asyncpg.Record) -> dict[str, Any]:
     "date_label": row["date_label"],
     "price": _int(row["price"]),
   }
+
+
+def _customer_notice(status: str | None) -> str:
+  normalized = str(status or "requested").strip().lower()
+  if normalized in {"confirmed", "scheduled"}:
+    return "예약이 완료되었습니다. 예약일에 전문가가 먼저 전화드리니 연락을 기다려 주세요."
+  if normalized == "in_progress":
+    return "상담이 진행 중입니다."
+  if normalized == "completed":
+    return "상담이 완료되었습니다. 전문가가 정리한 상담 내용을 확인해 주세요."
+  if normalized in {"cancelled", "canceled", "no_show", "refund_requested"}:
+    return "예약 상태가 변경되었습니다. 채팅방에서 상세 내용을 확인해 주세요."
+  if normalized == "contacting":
+    return "입금 확인 중입니다. 전문가가 확인 후 예약을 확정합니다."
+  return "예약 신청이 접수되었습니다. 채팅방에서 입금 안내를 확인해 주세요."
 
 
 def _customer_from_row(row: asyncpg.Record) -> dict[str, Any]:

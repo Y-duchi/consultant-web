@@ -180,7 +180,8 @@ async function requestPartnerJson<T>(
   });
   const envelope = (await response.json().catch(() => null)) as PartnerApiEnvelope<T> | null;
   if (!response.ok || envelope?.error) {
-    throw new Error(envelope?.error?.message || "파트너 백엔드 요청에 실패했습니다.");
+    const payload = envelope as (PartnerApiEnvelope<T> & { detail?: string }) | null;
+    throw new Error(payload?.error?.message || payload?.detail || "파트너 백엔드 요청에 실패했습니다.");
   }
   if (!envelope || envelope.data === null) {
     throw new Error("파트너 백엔드 응답이 비어 있습니다.");
@@ -400,6 +401,7 @@ let reviews: Review[] = [];
 let managerSettings: ManagerSettings = {
   operatingHours: defaultOperatingHours,
   holidays: [],
+  temporaryBookingBlocks: [],
   bookingOpenMonths: 1,
   notification: {
     bookingCreated: true,
@@ -896,6 +898,36 @@ export async function getBookingDetail(bookingId: string, user?: AuthUser): Prom
 
 export async function saveBookingChanges(bookingId: string, changes: BookingSaveChangesInput, user?: AuthUser): Promise<Booking> {
   if (shouldUsePartnerApi(user)) {
+    const changedKeys = Object.entries(changes).filter(([, value]) => {
+      if (value === undefined || value === null || value === "") return false;
+      if (typeof value === "object" && !Array.isArray(value)) return Object.keys(value).length > 0;
+      return true;
+    }).map(([key]) => key);
+
+    // Status and manual-deposit actions have dedicated POST/PATCH endpoints.
+    // Keeping these calls separate avoids proxies/CDNs that reject the generic
+    // booking PATCH while preserving the atomic generic PATCH for edits + notes.
+    if (changedKeys.length === 1 && changedKeys[0] === "status" && changes.status) {
+      const data = await requestPartnerJson<{ booking: Booking }>(
+        `/bookings/${encodeURIComponent(bookingId)}/status`,
+        {
+          method: "POST",
+          body: JSON.stringify({ status: changes.status }),
+        },
+      );
+      rememberBookings([data.booking]);
+      return clone(data.booking);
+    }
+
+    if (changedKeys.length === 1 && changedKeys[0] === "markPaymentPaid" && changes.markPaymentPaid) {
+      const data = await requestPartnerJson<{ booking: Booking }>(
+        `/bookings/${encodeURIComponent(bookingId)}/payment`,
+        { method: "POST" },
+      );
+      rememberBookings([data.booking]);
+      return clone(data.booking);
+    }
+
     const data = await requestPartnerJson<{ booking: Booking }>(
       `/bookings/${encodeURIComponent(bookingId)}`,
       {
@@ -954,7 +986,7 @@ export async function updateBookingStatus(bookingId: string, status: BookingStat
     const data = await requestPartnerJson<{ booking: Booking }>(
       `/bookings/${encodeURIComponent(bookingId)}/status`,
       {
-        method: "PATCH",
+        method: "POST",
         body: JSON.stringify({ status }),
       },
     );
@@ -1040,6 +1072,13 @@ export async function getCustomers(filters: CustomerFilters = {}, user?: AuthUse
   let result = canAccessAllData(user)
     ? customers
     : customers.filter((customer) => bookingCustomerIds.has(customer.id));
+  const scopedBookings = applyUserScope(bookings, user);
+  result = result.map((customer) => {
+    const latestBooking = scopedBookings
+      .filter((booking) => booking.customerId === customer.id)
+      .sort((a, b) => b.requestedAt.localeCompare(a.requestedAt))[0];
+    return { ...customer, latestBookingStatus: latestBooking?.status };
+  });
   if (filters.tag && filters.tag !== "all") {
     result = result.filter((customer) => customer.tags.includes(filters.tag!));
   }
@@ -1049,6 +1088,9 @@ export async function getCustomers(filters: CustomerFilters = {}, user?: AuthUse
       [customer.name, customer.phone, customer.email, customer.memo, customer.tags.join(" ")]
         .some((value) => value.toLowerCase().includes(query)),
     );
+  }
+  if (filters.status && filters.status !== "all") {
+    result = result.filter((customer) => customer.latestBookingStatus === filters.status);
   }
   const sort = filters.sort ?? "lastActiveDesc";
   result = [...result].sort((a, b) => {
@@ -1190,9 +1232,44 @@ export async function uploadChatAttachment(file: File, user?: AuthUser): Promise
   return clone(attachment);
 }
 
-export async function sendMessage(threadId: string, body: string, attachmentIds: string[] = []): Promise<ChatMessage> {
+export async function sendMessage(
+  threadId: string,
+  body: string,
+  attachmentIds: string[] = [],
+  user?: AuthUser,
+  clientMessageId?: string,
+): Promise<ChatMessage> {
+  if (shouldUsePartnerApi(user)) {
+    if (attachmentIds.length > 0) {
+      throw new Error("사진 첨부는 실시간 연결이 복구된 뒤 전송해 주세요.");
+    }
+    const messageId = clientMessageId || `web-http-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const data = await requestPartnerJson<{
+      message: {
+        id: string;
+        bookingId: string;
+        body: string;
+        senderName: string;
+        senderType: "user" | "expert" | "operator" | "system";
+        sentAt: string;
+      };
+    }>(`/chat/threads/${encodeURIComponent(threadId)}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ body, clientMessageId: messageId }),
+    });
+    const message: ChatMessage = {
+      id: data.message.id,
+      threadId,
+      senderType: data.message.senderType === "user" ? "customer" : data.message.senderType,
+      senderName: data.message.senderName,
+      body: data.message.body,
+      sentAt: data.message.sentAt,
+      attachments: [],
+    };
+    return clone(message);
+  }
   await delay();
-  const thread = findThread(threadId);
+  const thread = findThread(threadId, user);
   const message: ChatMessage = {
     id: `msg-${Date.now()}`,
     threadId,

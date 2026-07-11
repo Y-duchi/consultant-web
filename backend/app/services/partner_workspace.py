@@ -812,7 +812,23 @@ def _hydrate_booking(booking: dict) -> dict:
     "review_request_status": booking.get("review_request_status") or "not_ready",
     **booking,
     "business_id": expert["business_id"],
+    "customer_notice": _customer_notice(booking.get("status")),
   }
+
+
+def _customer_notice(status: str | None) -> str:
+  normalized = str(status or "requested").strip().lower()
+  if normalized in {"confirmed", "scheduled"}:
+    return "예약이 완료되었습니다. 예약일에 전문가가 먼저 전화드리니 연락을 기다려 주세요."
+  if normalized == "in_progress":
+    return "상담이 진행 중입니다."
+  if normalized == "completed":
+    return "상담이 완료되었습니다. 전문가가 정리한 상담 내용을 확인해 주세요."
+  if normalized in {"cancelled", "canceled", "no_show", "refund_requested"}:
+    return "예약 상태가 변경되었습니다. 채팅방에서 상세 내용을 확인해 주세요."
+  if normalized == "contacting":
+    return "입금 확인 중입니다. 전문가가 확인 후 예약을 확정합니다."
+  return "예약 신청이 접수되었습니다. 채팅방에서 입금 안내를 확인해 주세요."
 
 
 def _business_id_for_booking(booking: dict) -> str | None:

@@ -108,6 +108,7 @@ export async function startWebChimeMeeting(
   joinResult: ConsultingCallJoinResult,
   elements: WebChimeMeetingElements,
 ): Promise<WebChimeMeetingController> {
+  assertJoinCredentials(joinResult);
   const logger = new ConsoleLogger("AURAChimeMeeting", LogLevel.WARN);
   const deviceController = new DefaultDeviceController(logger);
   const configuration = new MeetingSessionConfiguration(
@@ -212,6 +213,15 @@ export async function startWebChimeMeeting(
       audioVideo.stop();
     },
   };
+}
+
+function assertJoinCredentials(joinResult: ConsultingCallJoinResult) {
+  const meetingId = joinResult.meeting.MeetingId;
+  const attendeeId = joinResult.attendee.AttendeeId;
+  const joinToken = joinResult.attendee.JoinToken;
+  if (typeof meetingId !== "string" || !meetingId || typeof attendeeId !== "string" || !attendeeId || typeof joinToken !== "string" || !joinToken) {
+    throw new Error("화상상담 입장 정보가 올바르지 않습니다. 서버의 Chime 설정과 예약 상태를 확인해 주세요.");
+  }
 }
 
 function toDeviceAccessErrorMessage(error: unknown): string {

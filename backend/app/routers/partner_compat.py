@@ -114,6 +114,17 @@ async def save_booking_changes(booking_id: str, payload: dict, principal: Partne
 @router.patch("/bookings/{booking_id}/status")
 async def update_booking_status(booking_id: str, payload: dict, principal: PartnerPrincipal = Depends(get_compat_principal)):
   booking = await real_workspace.update_partner_booking_status(booking_id, str(payload.get("status") or ""), principal)
+  from app.routers.consulting import broadcast_booking_status
+  await broadcast_booking_status(booking_id, str(booking.get("status") or ""), str(booking.get("customer_notice") or ""))
+  return ok({"booking": booking})
+
+
+@router.post("/bookings/{booking_id}/status")
+async def confirm_booking_status(booking_id: str, payload: dict, principal: PartnerPrincipal = Depends(get_compat_principal)):
+  """Compatibility method for hosted proxies that do not forward PATCH requests."""
+  booking = await real_workspace.update_partner_booking_status(booking_id, str(payload.get("status") or ""), principal)
+  from app.routers.consulting import broadcast_booking_status
+  await broadcast_booking_status(booking_id, str(booking.get("status") or ""), str(booking.get("customer_notice") or ""))
   return ok({"booking": booking})
 
 
@@ -226,7 +237,7 @@ async def chat_thread_detail(thread_id: str, principal: PartnerPrincipal = Depen
 
 @router.post("/chat/threads/{thread_id}/read")
 async def mark_chat_thread_read(thread_id: str, principal: PartnerPrincipal = Depends(get_compat_principal)):
-  return ok({"detail": await real_workspace.get_chat_thread_detail(thread_id, principal)})
+  return ok({"detail": await real_workspace.mark_chat_thread_read(thread_id, principal)})
 
 
 @router.get("/shared-reports")
@@ -291,13 +302,20 @@ def _thread_from_booking(booking: dict[str, Any], messages: list[dict[str, Any]]
   status = "waiting" if booking["status"] in {"requested", "contacting"} else "open"
   if booking["status"] in {"completed", "cancelled", "no_show"}:
     status = "closed"
+  read_at = booking.get("expert_read_at")
+  unread_count = sum(
+    1
+    for message in messages
+    if message.get("sender_type") == "customer"
+    and (not read_at or str(message.get("sent_at") or "") > str(read_at))
+  )
   return {
     "id": f"thread-{booking['id']}",
     "customer_id": booking["customer_id"],
     "booking_id": booking["id"],
     "assigned_expert_id": booking["expert_id"],
     "last_message_at": messages[-1]["sent_at"] if messages else booking["requested_at"],
-    "unread_count": 0,
+    "unread_count": unread_count,
     "status": status,
     "channel": "app_chat",
   }

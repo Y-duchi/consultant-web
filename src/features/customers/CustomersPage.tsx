@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { CalendarCheck2, MessageSquareText, Phone, Search } from "lucide-react";
-import { createPhoneAction, getCustomerDetail, getCustomers, getExpertName } from "../../services/api";
+import { createPhoneAction, getBookings, getCustomerDetail, getCustomers, getExpertName } from "../../services/api";
 import { useAuth } from "../auth/AuthContext";
 import { BookingStatusBadge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
@@ -12,7 +12,7 @@ import { SelectInput, TextInput } from "../../shared/ui/Field";
 import { PageHeader } from "../../shared/ui/PageHeader";
 import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/StateViews";
 import { formatCurrency, formatDate, formatDateTime, toInputDate } from "../../shared/utils/format";
-import type { Customer } from "../../types/domain";
+import type { BookingStatus, Customer } from "../../types/domain";
 import { AppReportCard } from "../reports/AppReportCard";
 
 export function CustomersPage() {
@@ -20,6 +20,7 @@ export function CustomersPage() {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [tag, setTag] = useState("all");
+  const [status, setStatus] = useState<BookingStatus | "all">("all");
   const [sort, setSort] = useState<"lastActiveDesc" | "nameAsc" | "paidDesc">("lastActiveDesc");
   const [activeAfter, setActiveAfter] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
@@ -29,6 +30,10 @@ export function CustomersPage() {
     queryKey: ["customers", query, tag, sort, user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
     queryFn: () => getCustomers({ query, tag, sort }, user ?? undefined),
   });
+  const customerBookingsQuery = useQuery({
+    queryKey: ["customer-status-bookings", user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
+    queryFn: () => getBookings({ sort: "createdDesc" }, user ?? undefined),
+  });
   const detailQuery = useQuery({
     queryKey: ["customer-detail", selectedCustomerId, user?.id, user?.businessId],
     queryFn: () => getCustomerDetail(selectedCustomerId!, user ?? undefined),
@@ -36,10 +41,20 @@ export function CustomersPage() {
   });
 
   const customers = useMemo(() => {
-    const source = customersQuery.data ?? [];
-    if (!activeAfter) return source;
-    return source.filter((customer) => toInputDate(customer.lastActiveAt) >= activeAfter);
-  }, [activeAfter, customersQuery.data]);
+    const latestStatusByCustomer = new Map<string, BookingStatus>();
+    for (const booking of customerBookingsQuery.data ?? []) {
+      if (!latestStatusByCustomer.has(booking.customerId)) {
+        latestStatusByCustomer.set(booking.customerId, booking.status);
+      }
+    }
+    return (customersQuery.data ?? [])
+      .map((customer) => ({
+        ...customer,
+        latestBookingStatus: customer.latestBookingStatus ?? latestStatusByCustomer.get(customer.id),
+      }))
+      .filter((customer) => !activeAfter || toInputDate(customer.lastActiveAt) >= activeAfter)
+      .filter((customer) => status === "all" || customer.latestBookingStatus === status);
+  }, [activeAfter, customerBookingsQuery.data, customersQuery.data, status]);
 
   const allTags = useMemo(() => {
     const tags = new Set<string>();
@@ -64,7 +79,7 @@ export function CustomersPage() {
         description="고객이 앱에서 선택한 AI 뷰티 리포트, 예약 이력, 처방 노트, 내부 메모와 자료 첨부 이력을 드로어에서 확인합니다."
       />
 
-      <div className="filter-bar">
+      <div className="filter-bar customer-filter-bar">
         <Search size={17} />
         <TextInput className="search-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="고객명, 전화번호, 리포트 태그, 뷰티 고민 검색" />
         <SelectInput value={tag} onChange={(event) => setTag(event.target.value)}>
@@ -72,6 +87,16 @@ export function CustomersPage() {
           {allTags.map((item) => (
             <option value={item} key={item}>{item}</option>
           ))}
+        </SelectInput>
+        <SelectInput value={status} onChange={(event) => setStatus(event.target.value as BookingStatus | "all")} aria-label="최근 예약 상태 필터">
+          <option value="all">전체 예약 상태</option>
+          <option value="requested">예약 신청</option>
+          <option value="contacting">채팅/입금 확인</option>
+          <option value="confirmed">예약 확정</option>
+          <option value="scheduled">상담 예정</option>
+          <option value="in_progress">상담 진행</option>
+          <option value="completed">상담 완료</option>
+          <option value="cancelled">예약 취소</option>
         </SelectInput>
         <TextInput type="date" value={activeAfter} onChange={(event) => setActiveAfter(event.target.value)} title="최근 활동일 필터" />
         <SelectInput value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}>
@@ -87,6 +112,7 @@ export function CustomersPage() {
             <tr>
               <th>고객</th>
               <th>태그</th>
+              <th>최근 예약 상태</th>
               <th>상담 이력</th>
               <th>총 결제</th>
               <th>최근 활동</th>
@@ -255,6 +281,7 @@ function CustomerRow({ customer, onOpen }: { customer: Customer; onOpen: () => v
           {customer.tags.map((item) => <span className="tag" key={item}>{item}</span>)}
         </div>
       </td>
+      <td>{customer.latestBookingStatus ? <BookingStatusBadge status={customer.latestBookingStatus} /> : <span className="muted">예약 없음</span>}</td>
       <td>{customer.completedBookings}/{customer.totalBookings} 완료</td>
       <td>{formatCurrency(customer.totalPaidAmount)}</td>
       <td>{formatDateTime(customer.lastActiveAt)}</td>

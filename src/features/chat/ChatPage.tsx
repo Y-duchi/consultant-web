@@ -7,6 +7,7 @@ import {
   getChatThreads,
   getPartnerSessionToken,
   markChatThreadRead,
+  sendMessage as sendChatText,
   uploadChatAttachment,
 } from "../../services/api";
 import {
@@ -34,6 +35,7 @@ export function ChatPage() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadThreadRef = useRef<string | null>(null);
+  const lastAppliedComposeRef = useRef<string | null>(null);
   const socketRef = useRef<ConsultingConversationSocketClient | null>(null);
   const [query, setQuery] = useState("");
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
@@ -44,6 +46,12 @@ export function ChatPage() {
   const [realtimeNotice, setRealtimeNotice] = useState<string | null>(null);
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
   const requestedBookingId = searchParams.get("bookingId")?.trim() ?? "";
+  const composeTemplate = searchParams.get("compose")?.trim() ?? "";
+  const chatThreadsQueryKey = useMemo(
+    () => ["chat-threads", user?.id, user?.businessId, user?.expertId, user?.workspaceScope] as const,
+    [user?.businessId, user?.expertId, user?.id, user?.workspaceScope],
+  );
+  const partnerSessionToken = getPartnerSessionToken();
   const uploadMutation = useMutation({
     mutationFn: (file: File) => uploadChatAttachment(file, user ?? undefined),
     onSuccess: (attachment) => {
@@ -52,7 +60,7 @@ export function ChatPage() {
   });
 
   const threadsQuery = useQuery({
-    queryKey: ["chat-threads", user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
+    queryKey: chatThreadsQueryKey,
     queryFn: () => getChatThreads(user ?? undefined),
   });
   const filteredThreads = useMemo(() => {
@@ -85,12 +93,21 @@ export function ChatPage() {
     const override = new URLSearchParams(window.location.search).get("bookingId")?.trim();
     return override || activeBookingId;
   }, [activeBookingId]);
-
   useEffect(() => {
     setLiveMessages(detail?.messages ?? []);
     setPendingAttachments([]);
     setSelectedReportId(null);
   }, [detail?.thread.id]);
+
+  useEffect(() => {
+    if (!composeTemplate || !detail?.booking?.id || detail.booking.id !== requestedBookingId) return;
+    const composeKey = `${detail.booking.id}:${composeTemplate}`;
+    if (lastAppliedComposeRef.current === composeKey) return;
+    lastAppliedComposeRef.current = composeKey;
+    setMessage(composeTemplate);
+    setRealtimeNotice("입금 안내 문구를 채웠습니다. 계좌 정보를 확인한 뒤 전송하세요.");
+    window.setTimeout(() => setRealtimeNotice(null), 5200);
+  }, [composeTemplate, detail?.booking?.id, requestedBookingId]);
 
   useEffect(() => {
     if (!detail?.thread.id || lastMarkedReadThreadRef.current === detail.thread.id) return;
@@ -156,6 +173,21 @@ export function ChatPage() {
           }
         }
 
+        if (event.type === "booking.status") {
+          setRealtimeNotice(event.message);
+          window.setTimeout(() => setRealtimeNotice(null), 5200);
+          void threadsQuery.refetch();
+          void detailQuery.refetch();
+          queryClient.invalidateQueries({ queryKey: ["bookings"] });
+          queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+        }
+
+        if (event.type === "call.status") {
+          setRealtimeNotice(event.message);
+          window.setTimeout(() => setRealtimeNotice(null), 5200);
+          void detailQuery.refetch();
+        }
+
         if (event.type === "error" && event.clientMessageId) {
           setLiveMessages((current) =>
             current.map((item) =>
@@ -168,7 +200,7 @@ export function ChatPage() {
       },
       onStatusChange: setSocketStatus,
       participantType: getParticipantType(user),
-      authToken: getPartnerSessionToken(),
+      authToken: partnerSessionToken,
     });
     socketRef.current = client;
 
@@ -178,18 +210,40 @@ export function ChatPage() {
         socketRef.current = null;
       }
     };
-  }, [detail, socketBookingId, user]);
+  }, [detail, partnerSessionToken, socketBookingId, user]);
 
-  const sendLiveMessage = (targetMessage: LiveChatMessage) => {
-    if (!socketBookingId) return false;
-    return Boolean(
-      socketRef.current?.sendMessage({
-        bookingId: socketBookingId,
-        body: targetMessage.body,
-        clientMessageId: targetMessage.clientMessageId ?? targetMessage.id,
-        mediaIds: targetMessage.attachments.map((attachment) => attachment.id),
-      }),
-    );
+  const sendLiveMessage = async (targetMessage: LiveChatMessage) => {
+    if (!socketBookingId || !detail) return false;
+    const clientMessageId = targetMessage.clientMessageId ?? targetMessage.id;
+    const sentBySocket = socketRef.current?.sendMessage({
+      bookingId: socketBookingId,
+      body: targetMessage.body,
+      clientMessageId,
+      mediaIds: targetMessage.attachments.map((attachment) => attachment.id),
+    });
+    if (sentBySocket) return true;
+
+    try {
+      const delivered = await sendChatText(
+        detail.thread.id,
+        targetMessage.body,
+        targetMessage.attachments.map((attachment) => attachment.id),
+        user ?? undefined,
+        clientMessageId,
+      );
+      setLiveMessages((current) =>
+        current.map((item) =>
+          item.clientMessageId === clientMessageId
+            ? { ...item, id: delivered.id, sentAt: delivered.sentAt, deliveryStatus: "sent" }
+            : item,
+        ),
+      );
+      setRealtimeNotice("실시간 연결이 끊겨 일반 메시지 전송으로 처리했습니다.");
+      window.setTimeout(() => setRealtimeNotice(null), 4200);
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   const retryMessage = (targetMessage: LiveChatMessage) => {
@@ -201,7 +255,8 @@ export function ChatPage() {
       ),
     );
 
-    if (!sendLiveMessage(targetMessage)) {
+    void sendLiveMessage(targetMessage).then((sent) => {
+      if (sent) return;
       setLiveMessages((current) =>
         current.map((item) =>
           item.clientMessageId === targetMessage.clientMessageId
@@ -209,13 +264,13 @@ export function ChatPage() {
             : item,
         ),
       );
-    }
+    });
   };
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
     const body = message.trim();
-    if ((!body && pendingAttachments.length === 0) || !activeThreadId || !detail || !socketBookingId || socketStatus !== "connected" || isClosedBooking) return;
+    if ((!body && pendingAttachments.length === 0) || !activeThreadId || !detail || !socketBookingId || isClosedBooking) return;
     const clientMessageId = createClientMessageId();
     const nextMessage: LiveChatMessage = {
       id: clientMessageId,
@@ -232,13 +287,14 @@ export function ChatPage() {
     setMessage("");
     setPendingAttachments([]);
 
-    if (!sendLiveMessage(nextMessage)) {
+    void sendLiveMessage(nextMessage).then((sent) => {
+      if (sent) return;
       setLiveMessages((current) =>
         current.map((item) =>
           item.clientMessageId === clientMessageId ? { ...item, deliveryStatus: "failed" } : item,
         ),
       );
-    }
+    });
   };
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -252,18 +308,20 @@ export function ChatPage() {
   if (threadsQuery.isError) return <ErrorState message={threadsQuery.error.message} onRetry={() => threadsQuery.refetch()} />;
 
   return (
-    <>
-      <PageHeader
-        eyebrow="Communication"
-        title="고객 대화"
-        description="예약 신청 후 생성된 채팅방에서 고객 문의, 선결제 또는 예약금 입금 확인, 앱 얼굴 리포트와 내부 메모를 함께 보며 응대합니다."
-      />
-      {realtimeNotice ? (
-        <div className="realtime-toast" role="status">
-          <BellRing size={16} />
-          <span>{realtimeNotice}</span>
-        </div>
-      ) : null}
+    <div className="chat-page">
+      <div className="chat-page-intro">
+        <PageHeader
+          eyebrow="Communication"
+          title="고객 대화"
+          description="예약 신청 후 생성된 채팅방에서 고객 문의, 선결제 또는 예약금 입금 확인, 앱 얼굴 리포트와 내부 메모를 함께 보며 응대합니다."
+        />
+        {realtimeNotice ? (
+          <div className="realtime-toast" role="status">
+            <BellRing size={16} />
+            <span>{realtimeNotice}</span>
+          </div>
+        ) : null}
+      </div>
 
       <section className="chat-layout">
         <aside className="thread-list">
@@ -295,7 +353,7 @@ export function ChatPage() {
           {filteredThreads.length === 0 ? <EmptyState title="대화가 없습니다" description="검색 조건을 조정해보세요." /> : null}
         </aside>
 
-        <main className="chat-main">
+        <main className={`chat-main ${isClosedBooking ? "has-closed" : ""}`}>
           <header className="chat-header">
             {detail ? (
               <>
@@ -306,13 +364,26 @@ export function ChatPage() {
                     <span>{detail.customer.phone} · 담당 {detail.expert.name} · {getSocketStatusLabel(socketStatus)}</span>
                   </div>
                 </div>
+                {socketStatus !== "connected" ? (
+                  <Button type="button" variant="ghost" onClick={() => socketRef.current?.reconnect()}>
+                    재연결
+                  </Button>
+                ) : null}
                 <Button
                   variant="secondary"
                   icon={<Phone size={16} />}
-                  onClick={() => detail.booking && navigate(`/workspace/bookings?bookingId=${detail.booking.id}&call=1`)}
+                  onClick={() => {
+                    if (!detail.booking) return;
+                    if (!canStartVideoCall(detail.booking.status, detail.booking.channel)) {
+                      setRealtimeNotice("입금 확인 후 전문가가 예약을 확정하면 상담 시간에 화상 상담을 시작할 수 있습니다.");
+                      window.setTimeout(() => setRealtimeNotice(null), 5200);
+                      return;
+                    }
+                    navigate(`/workspace/bookings?bookingId=${detail.booking.id}&call=1`);
+                  }}
                   disabled={!detail.booking}
                 >
-                  전화
+                  화상 상담
                 </Button>
               </>
             ) : (
@@ -320,14 +391,15 @@ export function ChatPage() {
             )}
           </header>
 
+          {isClosedBooking ? (
+            <div className="closed-thread-banner">
+              <strong>취소된 예약</strong>
+              <span>대화 기록은 확인할 수 있지만 새 메시지는 보낼 수 없습니다.</span>
+            </div>
+          ) : null}
+
           <div className="message-list">
             {detailQuery.isLoading ? <LoadingState label="대화 내용을 불러오는 중입니다" /> : null}
-            {isClosedBooking ? (
-              <div className="closed-thread-banner">
-                <strong>취소된 예약입니다</strong>
-                <span>대화 기록은 확인할 수 있지만 새 메시지는 보낼 수 없습니다.</span>
-              </div>
-            ) : null}
             {liveMessages.map((item) => (
               <div className={`message ${item.senderType === "operator" || item.senderType === "expert" ? "mine" : ""}`} key={item.id}>
                 <div className="message-bubble">
@@ -370,7 +442,7 @@ export function ChatPage() {
               {uploadMutation.isError ? <span className="form-error">{uploadMutation.error.message}</span> : null}
               <TextInput disabled={isClosedBooking} value={message} onChange={(event) => setMessage(event.target.value)} placeholder={isClosedBooking ? "취소된 예약에는 메시지를 보낼 수 없습니다" : "고객에게 보낼 메시지를 입력하세요"} />
             </div>
-            <Button type="submit" variant="primary" icon={<Send size={16} />} disabled={(!message.trim() && pendingAttachments.length === 0) || !socketBookingId || socketStatus !== "connected" || isClosedBooking || uploadMutation.isPending}>
+            <Button type="submit" variant="primary" icon={<Send size={16} />} disabled={(!message.trim() && pendingAttachments.length === 0) || !socketBookingId || isClosedBooking || uploadMutation.isPending || (pendingAttachments.length > 0 && socketStatus !== "connected")}>
               전송
             </Button>
           </form>
@@ -445,7 +517,7 @@ export function ChatPage() {
       >
         {selectedReport ? <AppReportCard className="report-modal-card" report={selectedReport} /> : null}
       </Modal>
-    </>
+    </div>
   );
 }
 
@@ -474,7 +546,7 @@ function getSocketStatusLabel(status: ConsultingSocketStatus) {
   if (status === "connected") return "실시간 연결됨";
   if (status === "connecting") return "연결 중";
   if (status === "reconnecting") return "재연결 중";
-  if (status === "offline") return "연결 대기";
+  if (status === "offline") return "실시간 연결 끊김 · 문자 전송 가능";
   return "대화 대기";
 }
 
@@ -486,6 +558,10 @@ function getDeliveryLabel(message: LiveChatMessage) {
 
 function isClosedBookingStatus(status: BookingStatus) {
   return status === "cancelled" || status === "no_show" || status === "refund_requested";
+}
+
+function canStartVideoCall(status: BookingStatus, channel: string) {
+  return channel === "video" && ["confirmed", "scheduled", "in_progress"].includes(status);
 }
 
 function mapSocketSenderType(

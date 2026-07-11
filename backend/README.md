@@ -91,6 +91,11 @@ POST /api/partner/consultations/{booking_id}/summary/generate
 GET  /api/partner/events
 GET  /api/partner/events/snapshot
 
+# Web compatibility status actions (POST is supported for hosted proxies that
+# reject PATCH; the legacy PATCH route remains available.)
+POST /api/consulting/partner/bookings/{booking_id}/status
+PATCH /api/consulting/partner/bookings/{booking_id}/status
+
 GET  /api/consulting/bookings/{booking_id}/summary
 ```
 
