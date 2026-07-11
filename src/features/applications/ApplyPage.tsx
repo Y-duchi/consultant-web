@@ -1,8 +1,13 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, FileCheck2, MapPin, Send, ShieldCheck, Video } from "lucide-react";
-import { submitPartnerApplication } from "../../services/api";
+import { ArrowLeft, FileCheck2, MailCheck, MapPin, Send, ShieldCheck, Video } from "lucide-react";
+import {
+  confirmPartnerEmailVerification,
+  requestPartnerEmailVerification,
+  submitPartnerApplication,
+  uploadPartnerApplicationDocument,
+} from "../../services/api";
 import { PartnerApplicationStatusBadge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Field, SelectInput, TextArea, TextInput } from "../../shared/ui/Field";
@@ -20,7 +25,13 @@ export function ApplyPage() {
   const [ownerName, setOwnerName] = useState("김세아");
   const [businessRegistrationNumber, setBusinessRegistrationNumber] = useState("123-45-67890");
   const [phone, setPhone] = useState("02-468-1900");
-  const [email, setEmail] = useState("pending@aura.example");
+  const [email, setEmail] = useState("");
+  const [emailVerificationCode, setEmailVerificationCode] = useState("");
+  const [emailVerificationToken, setEmailVerificationToken] = useState("");
+  const [emailVerificationMessage, setEmailVerificationMessage] = useState("");
+  const [emailVerificationError, setEmailVerificationError] = useState("");
+  const [isSendingVerification, setSendingVerification] = useState(false);
+  const [isConfirmingVerification, setConfirmingVerification] = useState(false);
   const [specialties, setSpecialties] = useState("메이크업, 퍼스널컬러, 웨딩");
   const [categories, setCategories] = useState("퍼스널컬러, 메이크업");
   const [introduction, setIntroduction] = useState("앱 AI 리포트를 함께 보며 바로 따라 할 수 있는 메이크업 처방을 제공합니다.");
@@ -32,25 +43,75 @@ export function ApplyPage() {
   const [offlineAddress, setOfflineAddress] = useState("서울 성동구 연무장길 8");
   const [offlineDetailAddress, setOfflineDetailAddress] = useState("3층 AURA 상담룸");
   const [offlineLocationNote, setOfflineLocationNote] = useState("성수역 3번 출구 도보 4분, 건물 뒤편 유료 주차 가능");
-  const [businessRegistrationFileName, setBusinessRegistrationFileName] = useState("AURA성수_사업자등록증.pdf");
-  const [beautyLicenseFileName, setBeautyLicenseFileName] = useState("김세아_국가미용사면허증.pdf");
-  const [additionalCertificateFileNames, setAdditionalCertificateFileNames] = useState<string[]>(["퍼스널컬러컨설턴트1급.pdf"]);
+  const [businessRegistrationFile, setBusinessRegistrationFile] = useState<File | null>(null);
+  const [beautyLicenseFile, setBeautyLicenseFile] = useState<File | null>(null);
+  const [additionalCertificateFiles, setAdditionalCertificateFiles] = useState<File[]>([]);
   const [isSubmitting, setSubmitting] = useState(false);
+  const [submissionError, setSubmissionError] = useState("");
   const [submittedApplication, setSubmittedApplication] = useState<PartnerApplication | null>(null);
   const hasOnlineConsulting = consultingModes.includes("online");
   const hasOfflineConsulting = consultingModes.includes("offline");
 
-  const requiredDocumentsReady = useMemo(
-    () => Boolean(businessRegistrationFileName && beautyLicenseFileName),
-    [beautyLicenseFileName, businessRegistrationFileName],
-  );
-  const canSubmit = requiredDocumentsReady && consultingModes.length > 0 && (!hasOfflineConsulting || offlineAddress.trim().length > 0);
+  const businessRegistrationFileName = businessRegistrationFile?.name ?? "";
+  const beautyLicenseFileName = beautyLicenseFile?.name ?? "";
+  const additionalCertificateFileNames = additionalCertificateFiles.map((file) => file.name);
+  const requiredDocumentsReady = Boolean(businessRegistrationFile);
+  const canSubmit = Boolean(emailVerificationToken) && requiredDocumentsReady && consultingModes.length > 0 && (!hasOfflineConsulting || offlineAddress.trim().length > 0);
+
+  const updateEmail = (value: string) => {
+    setEmail(value);
+    setEmailVerificationCode("");
+    setEmailVerificationToken("");
+    setEmailVerificationMessage("");
+    setEmailVerificationError("");
+  };
+
+  const sendVerificationCode = async () => {
+    if (!email.trim()) return;
+    setSendingVerification(true);
+    setEmailVerificationError("");
+    setEmailVerificationToken("");
+    try {
+      const result = await requestPartnerEmailVerification(email);
+      setEmailVerificationMessage(`인증 코드를 보냈습니다. ${result.expiresInMinutes}분 안에 입력해 주세요.`);
+    } catch (error) {
+      setEmailVerificationError(error instanceof Error ? error.message : "인증 메일을 보내지 못했습니다.");
+    } finally {
+      setSendingVerification(false);
+    }
+  };
+
+  const confirmVerificationCode = async () => {
+    if (emailVerificationCode.length !== 6) return;
+    setConfirmingVerification(true);
+    setEmailVerificationError("");
+    try {
+      const result = await confirmPartnerEmailVerification(email, emailVerificationCode);
+      setEmailVerificationToken(result.verificationToken);
+      setEmailVerificationMessage("이메일 인증이 완료되었습니다.");
+    } catch (error) {
+      setEmailVerificationToken("");
+      setEmailVerificationError(error instanceof Error ? error.message : "인증 코드를 확인하지 못했습니다.");
+    } finally {
+      setConfirmingVerification(false);
+    }
+  };
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!canSubmit) return;
+    if (!canSubmit || !businessRegistrationFile) return;
     setSubmitting(true);
+    setSubmissionError("");
     try {
+      const [businessRegistrationStorageKey, beautyLicenseStorageKey, additionalCertificateStorageKeys] = await Promise.all([
+        uploadPartnerApplicationDocument(businessRegistrationFile, "business_registration"),
+        beautyLicenseFile
+          ? uploadPartnerApplicationDocument(beautyLicenseFile, "beauty_license")
+          : Promise.resolve(undefined),
+        Promise.all(
+          additionalCertificateFiles.map((file) => uploadPartnerApplicationDocument(file, "additional_certificate")),
+        ),
+      ]);
       const application = await submitPartnerApplication({
         partnerType,
         businessName,
@@ -58,6 +119,7 @@ export function ApplyPage() {
         businessRegistrationNumber,
         phone,
         email,
+        emailVerificationToken,
         specialties: toList(specialties),
         categories: toList(categories),
         introduction,
@@ -72,21 +134,26 @@ export function ApplyPage() {
         offlineDetailAddress: hasOfflineConsulting ? offlineDetailAddress : undefined,
         offlineLocationNote: hasOfflineConsulting ? offlineLocationNote : undefined,
         businessRegistrationFileName,
+        businessRegistrationStorageKey,
         beautyLicenseFileName,
+        beautyLicenseStorageKey,
         additionalCertificateFileNames,
+        additionalCertificateStorageKeys,
       });
       setSubmittedApplication(application);
+    } catch (error) {
+      setSubmissionError(error instanceof Error ? error.message : "입점 신청 제출에 실패했습니다.");
     } finally {
       setSubmitting(false);
     }
   };
 
-  const updateFileName = (setter: (value: string) => void) => (event: ChangeEvent<HTMLInputElement>) => {
-    setter(event.target.files?.[0]?.name ?? "");
+  const updateFile = (setter: (value: File | null) => void) => (event: ChangeEvent<HTMLInputElement>) => {
+    setter(event.target.files?.[0] ?? null);
   };
 
-  const updateAdditionalFileNames = (event: ChangeEvent<HTMLInputElement>) => {
-    setAdditionalCertificateFileNames(Array.from(event.target.files ?? []).map((file) => file.name));
+  const updateAdditionalFiles = (event: ChangeEvent<HTMLInputElement>) => {
+    setAdditionalCertificateFiles(Array.from(event.target.files ?? []));
   };
 
   const toggleConsultingMode = (mode: ConsultingMode) => {
@@ -126,7 +193,7 @@ export function ApplyPage() {
               <ShieldCheck size={18} />
               <div>
                 <strong>승인 전 업체/전문가 상태</strong>
-                <span>관리자 승인 전에는 예약·고객 운영 메뉴 대신 검토 상태만 확인하게 됩니다.</span>
+                <span>접수 확인과 심사 결과를 인증한 이메일로 안내합니다. 관리자 승인 전에는 검토 상태만 확인할 수 있습니다.</span>
               </div>
             </div>
             <div className="page-actions">
@@ -178,9 +245,25 @@ export function ApplyPage() {
             <Field label="연락처">
               <TextInput value={phone} onChange={(event) => setPhone(event.target.value)} required />
             </Field>
-            <Field label="이메일">
-              <TextInput type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
-            </Field>
+            <div className="field span-2">
+              <span>이메일 인증</span>
+              <div className="email-verification-row">
+                <TextInput type="email" value={email} onChange={(event) => updateEmail(event.target.value)} required disabled={Boolean(emailVerificationToken)} />
+                <Button type="button" variant="secondary" icon={<Send size={16} />} onClick={sendVerificationCode} disabled={!email.trim() || isSendingVerification || Boolean(emailVerificationToken)}>
+                  {isSendingVerification ? "전송 중" : "인증 코드 전송"}
+                </Button>
+              </div>
+              {emailVerificationMessage && !emailVerificationToken ? (
+                <div className="email-verification-row">
+                  <TextInput inputMode="numeric" maxLength={6} value={emailVerificationCode} onChange={(event) => setEmailVerificationCode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="6자리 인증 코드" />
+                  <Button type="button" variant="secondary" icon={<MailCheck size={16} />} onClick={confirmVerificationCode} disabled={emailVerificationCode.length !== 6 || isConfirmingVerification}>
+                    {isConfirmingVerification ? "확인 중" : "인증 확인"}
+                  </Button>
+                </div>
+              ) : null}
+              {emailVerificationMessage ? <small className={emailVerificationToken ? "verification-success" : ""}>{emailVerificationMessage}</small> : null}
+              {emailVerificationError ? <small className="verification-error">{emailVerificationError}</small> : null}
+            </div>
             <Field label="전문 분야" hint="쉼표로 구분">
               <TextInput value={specialties} onChange={(event) => setSpecialties(event.target.value)} />
             </Field>
@@ -251,22 +334,20 @@ export function ApplyPage() {
           </div>
 
           <div className="document-upload-grid">
-            <Field label="사업자등록증 PDF">
-              <input className="control" type="file" accept="application/pdf" onChange={updateFileName(setBusinessRegistrationFileName)} />
-              <small>{businessRegistrationFileName || "PDF 파일을 선택하세요"}</small>
+            <Field label="사업자등록증 PDF" hint="필수 서류">
+              <input className="control" type="file" accept="application/pdf" required onChange={updateFile(setBusinessRegistrationFile)} />
             </Field>
-            <Field label="국가 미용사 면허증 PDF">
-              <input className="control" type="file" accept="application/pdf" onChange={updateFileName(setBeautyLicenseFileName)} />
-              <small>{beautyLicenseFileName || "PDF 파일을 선택하세요"}</small>
+            <Field label="국가 미용사 면허증 PDF" hint="선택 서류">
+              <input className="control" type="file" accept="application/pdf" onChange={updateFile(setBeautyLicenseFile)} />
             </Field>
-            <Field label="추가 자격증 PDF">
-              <input className="control" type="file" accept="application/pdf" multiple onChange={updateAdditionalFileNames} />
-              <small>{additionalCertificateFileNames.length ? additionalCertificateFileNames.join(", ") : "선택 사항"}</small>
+            <Field label="추가 자격증 PDF" hint="선택 서류 · 여러 파일 선택 가능">
+              <input className="control" type="file" accept="application/pdf" multiple onChange={updateAdditionalFiles} />
             </Field>
           </div>
 
+          {submissionError ? <div className="form-error">{submissionError}</div> : null}
           <Button type="submit" variant="primary" icon={<Send size={17} />} disabled={isSubmitting || !canSubmit}>
-            {isSubmitting ? "제출 중" : "입점 신청 제출"}
+            {isSubmitting ? "파일 업로드 및 제출 중" : "입점 신청 제출"}
           </Button>
         </form>
       </section>

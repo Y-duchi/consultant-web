@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional, Union
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.schemas.partner_applications import (
   PartnerApplication,
@@ -13,13 +13,30 @@ from app.schemas.partner_applications import (
   PartnerApplicationDetail,
   PartnerApplicationStatus,
   PartnerApplicationStatusResult,
+  PartnerEmailVerificationConfirm,
+  PartnerEmailVerificationRequest,
+  PartnerEmailVerificationRequested,
+  PartnerEmailVerificationResult,
   PartnerDocumentAccessResult,
+  PartnerDocumentUploadRequest,
 )
-from app.services import partner_applications, real_workspace
+from app.services import real_workspace
 from app.services.auth import get_admin_principal
+from app.services.s3 import create_presigned_upload
+from app.settings import get_settings
 
 
 router = APIRouter()
+
+
+@router.post("/email-verification/request", response_model=PartnerEmailVerificationRequested)
+async def request_partner_email_verification(payload: PartnerEmailVerificationRequest):
+  return await real_workspace.request_partner_email_verification(payload.email)
+
+
+@router.post("/email-verification/confirm", response_model=PartnerEmailVerificationResult)
+async def confirm_partner_email_verification(payload: PartnerEmailVerificationConfirm):
+  return await real_workspace.confirm_partner_email_verification(payload.email, payload.code)
 
 
 @router.get("", response_model=list[PartnerApplication])
@@ -39,7 +56,16 @@ async def create_partner_application(payload: PartnerApplicationCreate):
 
 @router.post("/documents/{document_id}/access", response_model=PartnerDocumentAccessResult)
 async def create_partner_application_document_access(document_id: str, _admin=Depends(get_admin_principal)):
-  return partner_applications.create_document_access(document_id)
+  return await real_workspace.create_partner_application_document_access(document_id)
+
+
+@router.post("/documents/presigned-upload")
+async def create_partner_application_document_upload(payload: PartnerDocumentUploadRequest):
+  settings = get_settings()
+  if not settings.s3_configured:
+    raise HTTPException(status_code=503, detail="S3_BUCKET_NAME is not configured.")
+  folder = "business-verifications" if payload.document_type.value == "business_registration" else "credentials"
+  return create_presigned_upload(settings, folder, payload.file_name, payload.content_type)
 
 
 @router.get("/{application_id}/status", response_model=PartnerApplicationStatusResult)

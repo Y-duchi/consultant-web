@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class PartnerType(str, Enum):
@@ -82,7 +82,29 @@ class PartnerApplication(BaseModel):
   review_memo: Optional[str] = None
   business_id: Optional[str] = None
   generated_account_id: Optional[str] = None
+  last_email_notification_type: Optional[str] = None
+  last_email_notification_status: Optional[str] = None
+  last_email_notification_error: Optional[str] = None
+  last_email_notification_sent_at: Optional[str] = None
   documents: list[PartnerApplicationDocument]
+
+
+class PartnerEmailVerificationRequest(BaseModel):
+  email: str = Field(min_length=3, max_length=320)
+
+
+class PartnerEmailVerificationConfirm(PartnerEmailVerificationRequest):
+  code: str = Field(pattern=r"^\d{6}$")
+
+
+class PartnerEmailVerificationRequested(BaseModel):
+  expires_in_minutes: int
+  resend_after_seconds: int
+
+
+class PartnerEmailVerificationResult(BaseModel):
+  verification_token: str
+  expires_in_minutes: int
 
 
 class PartnerApplicationCreate(BaseModel):
@@ -92,6 +114,7 @@ class PartnerApplicationCreate(BaseModel):
   business_registration_number: Optional[str] = None
   phone: str = Field(min_length=1)
   email: str
+  email_verification_token: str = Field(min_length=32)
   specialties: list[str] = []
   categories: list[str] = []
   introduction: str = ""
@@ -105,9 +128,41 @@ class PartnerApplicationCreate(BaseModel):
   offline_address: Optional[str] = None
   offline_detail_address: Optional[str] = None
   offline_location_note: Optional[str] = None
-  business_registration_file_name: Optional[str] = None
+  business_registration_file_name: Optional[str] = Field(default=None, validate_default=True)
+  business_registration_storage_key: Optional[str] = None
   beauty_license_file_name: Optional[str] = None
+  beauty_license_storage_key: Optional[str] = None
   additional_certificate_file_names: list[str] = []
+  additional_certificate_storage_keys: list[str] = []
+
+  @field_validator("business_registration_file_name", mode="before")
+  @classmethod
+  def require_business_registration_document(cls, value):
+    normalized = str(value or "").strip()
+    if not normalized:
+      raise ValueError("사업자등록증 PDF는 필수입니다.")
+    return normalized
+
+  @model_validator(mode="after")
+  def validate_document_storage_keys(self):
+    if not (self.business_registration_storage_key or "").strip():
+      raise ValueError("사업자등록증 파일 업로드를 완료해 주세요.")
+    if bool((self.beauty_license_file_name or "").strip()) != bool((self.beauty_license_storage_key or "").strip()):
+      raise ValueError("국가 미용사 면허증 파일 정보가 일치하지 않습니다.")
+    if (
+      len(self.additional_certificate_file_names) != len(self.additional_certificate_storage_keys)
+      or any(not str(value).strip() for value in self.additional_certificate_file_names)
+      or any(not str(value).strip() for value in self.additional_certificate_storage_keys)
+    ):
+      raise ValueError("추가 자격증 파일 정보가 일치하지 않습니다.")
+    return self
+
+
+class PartnerDocumentUploadRequest(BaseModel):
+  document_type: PartnerApplicationDocumentType
+  file_name: str = Field(min_length=1)
+  content_type: str = Field(pattern="^application/pdf$")
+  size_bytes: int = Field(gt=0, le=10 * 1024 * 1024)
 
 
 class PartnerApplicationDecision(BaseModel):

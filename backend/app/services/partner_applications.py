@@ -493,16 +493,26 @@ def _require_review_memo(payload: PartnerApplicationDecision) -> None:
 
 
 def _build_documents(application_id: str, payload: PartnerApplicationCreate) -> list[PartnerApplicationDocument]:
-  entries: list[tuple[PartnerApplicationDocumentType, str | None]] = [
-    (PartnerApplicationDocumentType.business_registration, payload.business_registration_file_name),
-    (PartnerApplicationDocumentType.beauty_license, payload.beauty_license_file_name),
-    *[(PartnerApplicationDocumentType.additional_certificate, name) for name in payload.additional_certificate_file_names],
+  entries: list[tuple[PartnerApplicationDocumentType, str | None, str | None]] = [
+    (
+      PartnerApplicationDocumentType.business_registration,
+      payload.business_registration_file_name,
+      payload.business_registration_storage_key,
+    ),
+    (
+      PartnerApplicationDocumentType.beauty_license,
+      payload.beauty_license_file_name,
+      payload.beauty_license_storage_key,
+    ),
+    *[
+      (PartnerApplicationDocumentType.additional_certificate, name, payload.additional_certificate_storage_keys[index])
+      for index, name in enumerate(payload.additional_certificate_file_names)
+    ],
   ]
   documents: list[PartnerApplicationDocument] = []
-  for index, (document_type, file_name) in enumerate(entries):
+  for index, (document_type, file_name, storage_key) in enumerate(entries):
     if not file_name:
       continue
-    folder = "business-verifications" if document_type == PartnerApplicationDocumentType.business_registration else "credentials"
     documents.append(
       PartnerApplicationDocument(
         id=_make_id(f"doc{index}"),
@@ -510,7 +520,7 @@ def _build_documents(application_id: str, payload: PartnerApplicationCreate) -> 
         type=document_type,
         file_name=file_name,
         size_label=f"{max(420, len(file_name) * 28)}KB",
-        storage_key=f"{folder}/{application_id}/{document_type.value}-{index}.pdf",
+        storage_key=storage_key or "",
         uploaded_at=_now(),
         review_status=PartnerApplicationDocumentReviewStatus.pending,
       )

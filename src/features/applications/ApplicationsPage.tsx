@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Copy, Eye, FileText, KeyRound, RefreshCw, Search, XCircle } from "lucide-react";
+import { CheckCircle2, Copy, Eye, FileText, KeyRound, MailCheck, RefreshCw, Search, XCircle } from "lucide-react";
 import {
   approvePartnerApplication,
   getPartnerApplicationDetail,
@@ -25,7 +25,15 @@ import {
   partnerApplicationStatusLabel,
   workspaceScopeLabel,
 } from "../../shared/utils/format";
-import type { ConsultingMode, PartnerApplication, PartnerApplicationStatus, PartnerAccount, PartnerBusinessMember } from "../../types/domain";
+import type {
+  ConsultingMode,
+  PartnerAccount,
+  PartnerApplication,
+  PartnerApplicationDocument,
+  PartnerApplicationDocumentType,
+  PartnerApplicationStatus,
+  PartnerBusinessMember,
+} from "../../types/domain";
 
 const statusOptions: Array<PartnerApplicationStatus | "all"> = ["all", "submitted", "needs_update", "approved", "rejected"];
 
@@ -38,6 +46,7 @@ export function ApplicationsPage() {
   const [generatedAccount, setGeneratedAccount] = useState<PartnerAccount | null>(null);
   const [generatedMember, setGeneratedMember] = useState<PartnerBusinessMember | null>(null);
   const [documentAccess, setDocumentAccess] = useState<PartnerDocumentAccessResult | null>(null);
+  const [documentAccessError, setDocumentAccessError] = useState("");
   const [credentialsCopied, setCredentialsCopied] = useState(false);
 
   const applicationsQuery = useQuery({
@@ -55,7 +64,6 @@ export function ApplicationsPage() {
   const visibleAccount = generatedAccount ?? detailQuery.data?.account ?? null;
   const visibleMember = generatedMember ?? detailQuery.data?.member ?? null;
   const isFinalDecision = selectedApplication?.status === "approved" || selectedApplication?.status === "rejected";
-  const hasReviewMemo = reviewMemo.trim().length > 0;
 
   useEffect(() => {
     setReviewMemo(selectedApplication?.reviewMemo ?? "");
@@ -65,6 +73,7 @@ export function ApplicationsPage() {
     setGeneratedAccount(null);
     setGeneratedMember(null);
     setDocumentAccess(null);
+    setDocumentAccessError("");
     setCredentialsCopied(false);
   }, [selectedId]);
 
@@ -76,7 +85,11 @@ export function ApplicationsPage() {
   const decisionMutation = useMutation({
     mutationFn: ({ nextStatus }: { nextStatus: Exclude<PartnerApplicationStatus, "approved"> }) =>
       updatePartnerApplicationStatus(selectedId!, nextStatus, {
-        reviewMemo: reviewMemo || "관리자 검토 결과가 반영되었습니다.",
+        reviewMemo:
+          reviewMemo ||
+          (nextStatus === "needs_update"
+            ? "신청 정보 또는 제출 서류 보완을 요청했습니다."
+            : "관리자 검토 결과 반려되었습니다."),
         reviewerName: "플랫폼 관리자",
       }),
     onSuccess: refreshApplications,
@@ -87,7 +100,6 @@ export function ApplicationsPage() {
       approvePartnerApplication(selectedId!, {
         reviewMemo: reviewMemo || "제출 서류 확인 완료. 파트너 계정을 생성했습니다.",
         reviewerName: "플랫폼 관리자",
-        accountEmail: selectedApplication?.email,
         workspaceScope: "business_operations",
     }),
     onSuccess: async (result: PartnerApplicationApprovalResult) => {
@@ -135,7 +147,21 @@ export function ApplicationsPage() {
   );
 
   const openDocument = async (documentId: string) => {
-    setDocumentAccess(await preparePartnerApplicationDocumentAccess(documentId));
+    const previewWindow = window.open("about:blank", "_blank");
+    if (previewWindow) previewWindow.opener = null;
+    setDocumentAccessError("");
+    try {
+      const access = await preparePartnerApplicationDocumentAccess(documentId);
+      setDocumentAccess(access);
+      if (previewWindow) {
+        previewWindow.location.href = access.accessUrl;
+      } else {
+        window.open(access.accessUrl, "_blank", "noopener,noreferrer");
+      }
+    } catch (error) {
+      previewWindow?.close();
+      setDocumentAccessError(error instanceof Error ? error.message : "문서를 열지 못했습니다.");
+    }
   };
 
   if (applicationsQuery.isLoading) return <LoadingState label="입점 신청 목록을 불러오는 중입니다" />;
@@ -249,7 +275,9 @@ export function ApplicationsPage() {
                       ) : null}
                     </div>
                   </td>
-                  <td>{application.documents.length}개</td>
+                  <td>
+                    <ApplicationDocumentSummary documents={application.documents} />
+                  </td>
                   <td>{formatDateTime(application.updatedAt)}</td>
                   <td>
                     <div className="row-actions">
@@ -276,7 +304,7 @@ export function ApplicationsPage() {
               <Button
                 variant="secondary"
                 icon={<FileText size={16} />}
-                disabled={isFinalDecision || !hasReviewMemo || decisionMutation.isPending}
+                disabled={isFinalDecision || decisionMutation.isPending}
                 onClick={() => decisionMutation.mutate({ nextStatus: "needs_update" })}
               >
                 보완 요청
@@ -284,7 +312,7 @@ export function ApplicationsPage() {
               <Button
                 variant="danger"
                 icon={<XCircle size={16} />}
-                disabled={isFinalDecision || !hasReviewMemo || decisionMutation.isPending}
+                disabled={isFinalDecision || decisionMutation.isPending}
                 onClick={() => decisionMutation.mutate({ nextStatus: "rejected" })}
               >
                 반려
@@ -343,39 +371,61 @@ export function ApplicationsPage() {
             <section className="detail-section">
               <div className="section-title-row">
                 <h3>제출 서류</h3>
-                <Badge tone="neutral">Private S3</Badge>
+                <ApplicationDocumentSummary documents={selectedApplication.documents} />
               </div>
               <div className="attachment-list">
-                {selectedApplication.documents.map((document) => (
-                  <div className="attachment-item application-document" key={document.id}>
-                    <div className="document-main">
-                      <FileText size={18} />
-                      <div className="cell-main">
-                        <strong>{document.fileName}</strong>
-                        <span>
-                          {partnerApplicationDocumentTypeLabel[document.type]} · {document.sizeLabel}
-                        </span>
+                {getApplicationDocumentRows(selectedApplication.documents).map((item) =>
+                  item.document ? (
+                    <div className="attachment-item application-document" key={item.key}>
+                      <div className="document-main">
+                        <FileText size={18} />
+                        <div className="cell-main">
+                          <strong>{item.document.fileName}</strong>
+                          <span>
+                            {item.label} · {item.required ? "필수" : "선택"} · {item.document.sizeLabel}
+                          </span>
+                        </div>
                       </div>
+                      <div className="row-actions">
+                        <Badge tone={item.required ? "info" : "neutral"}>{item.required ? "필수" : "선택"}</Badge>
+                        <PartnerApplicationDocumentReviewBadge status={item.document.reviewStatus} />
+                        {item.document.storageKey ? (
+                          <Button variant="secondary" icon={<Eye size={15} />} onClick={() => openDocument(item.document!.id)}>
+                            열람
+                          </Button>
+                        ) : (
+                          <Badge tone="warning">파일 없음</Badge>
+                        )}
+                      </div>
+                      {item.document.note ? <p>{item.document.note}</p> : null}
                     </div>
-                    <div className="row-actions">
-                      <PartnerApplicationDocumentReviewBadge status={document.reviewStatus} />
-                      <Button variant="secondary" icon={<Eye size={15} />} onClick={() => openDocument(document.id)}>
-                        열람
-                      </Button>
+                  ) : (
+                    <div
+                      className={`attachment-item application-document document-missing ${item.required ? "document-missing-required" : ""}`}
+                      key={item.key}
+                    >
+                      <div className="document-main">
+                        <FileText size={18} />
+                        <div className="cell-main">
+                          <strong>{item.label}</strong>
+                          <span>{item.required ? "필수 서류가 제출되지 않았습니다" : "선택 서류 미제출"}</span>
+                        </div>
+                      </div>
+                      <Badge tone={item.required ? "danger" : "neutral"}>{item.required ? "필수 누락" : "선택"}</Badge>
                     </div>
-                    {document.note ? <p>{document.note}</p> : null}
-                  </div>
-                ))}
+                  ),
+                )}
               </div>
               {documentAccess ? (
                 <div className="verification-note">
                   <FileText size={18} />
                   <div>
                     <strong>{documentAccess.fileName}</strong>
-                    <span>{documentAccess.expiresInMinutes}분짜리 문서 접근 URL이 준비되었습니다.</span>
+                    <span>새 창에서 열었습니다. 접근 URL은 {documentAccess.expiresInMinutes}분 동안 유효합니다.</span>
                   </div>
                 </div>
               ) : null}
+              {documentAccessError ? <div className="form-error">{documentAccessError}</div> : null}
             </section>
 
             <section className="detail-section">
@@ -384,6 +434,28 @@ export function ApplicationsPage() {
                 <TextArea value={reviewMemo} onChange={(event) => setReviewMemo(event.target.value)} placeholder="사업자등록증, 미용사 면허증, 업체 실재 여부 확인 결과를 남겨주세요." />
               </Field>
             </section>
+
+            {selectedApplication.lastEmailNotificationStatus ? (
+              <section className="detail-section">
+                <div className="section-title-row">
+                  <h3>신청자 이메일 안내</h3>
+                  <Badge tone={selectedApplication.lastEmailNotificationStatus === "sent" ? "success" : "danger"}>
+                    {selectedApplication.lastEmailNotificationStatus === "sent" ? "발송 완료" : "발송 실패"}
+                  </Badge>
+                </div>
+                <div className="verification-note">
+                  <MailCheck size={18} />
+                  <div>
+                    <strong>{emailNotificationLabel(selectedApplication.lastEmailNotificationType)}</strong>
+                    <span>
+                      {selectedApplication.lastEmailNotificationStatus === "sent"
+                        ? `${selectedApplication.email} · ${selectedApplication.lastEmailNotificationSentAt ? formatDateTime(selectedApplication.lastEmailNotificationSentAt) : "발송 완료"}`
+                        : selectedApplication.lastEmailNotificationError || "메일 발송 상태를 확인해 주세요."}
+                    </span>
+                  </div>
+                </div>
+              </section>
+            ) : null}
 
             {visibleAccount ? (
               <GeneratedAccountPanel
@@ -425,6 +497,53 @@ function DetailRow({ children, label }: { children: ReactNode; label: string }) 
       <dd>{children}</dd>
     </div>
   );
+}
+
+function emailNotificationLabel(type?: string) {
+  if (type === "submitted") return "접수 확인 메일";
+  if (type === "needs_update") return "보완 요청 메일";
+  if (type === "rejected") return "반려 결과 메일";
+  if (type === "approved") return "승인 및 계정 안내 메일";
+  if (type === "credentials_reissued") return "임시 비밀번호 재발급 메일";
+  return "심사 안내 메일";
+}
+
+function ApplicationDocumentSummary({ documents }: { documents: PartnerApplicationDocument[] }) {
+  const hasBusinessRegistration = documents.some((document) => document.type === "business_registration");
+  const optionalCount = documents.filter((document) => document.type !== "business_registration").length;
+  return (
+    <div className="document-summary">
+      <Badge tone={hasBusinessRegistration ? "success" : "danger"}>{hasBusinessRegistration ? "필수 제출" : "필수 누락"}</Badge>
+      <span>선택 {optionalCount}개</span>
+    </div>
+  );
+}
+
+function getApplicationDocumentRows(documents: PartnerApplicationDocument[]) {
+  const rows: Array<{
+    key: string;
+    type: PartnerApplicationDocumentType;
+    label: string;
+    required: boolean;
+    document?: PartnerApplicationDocument;
+  }> = [];
+  const definitions: Array<{ type: PartnerApplicationDocumentType; required: boolean }> = [
+    { type: "business_registration", required: true },
+    { type: "beauty_license", required: false },
+    { type: "additional_certificate", required: false },
+  ];
+
+  definitions.forEach(({ type, required }) => {
+    const matchingDocuments = documents.filter((document) => document.type === type);
+    if (matchingDocuments.length === 0) {
+      rows.push({ key: `${type}-missing`, type, label: partnerApplicationDocumentTypeLabel[type], required });
+      return;
+    }
+    matchingDocuments.forEach((document) => {
+      rows.push({ key: document.id, type, label: partnerApplicationDocumentTypeLabel[type], required, document });
+    });
+  });
+  return rows;
 }
 
 function getApplicationConsultingModes(application: PartnerApplication): ConsultingMode[] {
