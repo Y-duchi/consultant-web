@@ -525,6 +525,12 @@ a {
   font-weight: 800;
 }
 
+.field-required {
+  margin-left: 3px;
+  color: var(--danger);
+  font-weight: 900;
+}
+
 .field small {
   color: var(--text-soft);
   font-size: 12px;

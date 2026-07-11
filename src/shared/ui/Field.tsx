@@ -4,13 +4,17 @@ interface FieldProps {
   className?: string;
   label: string;
   hint?: string;
+  required?: boolean;
   children: React.ReactNode;
 }
 
-export function Field({ children, className = "", hint, label }: FieldProps) {
+export function Field({ children, className = "", hint, label, required = false }: FieldProps) {
   return (
     <label className={`field ${className}`.trim()}>
-      <span>{label}</span>
+      <span>
+        {label}
+        {required ? <span className="field-required" aria-hidden="true">*</span> : null}
+      </span>
       {children}
       {hint ? <small>{hint}</small> : null}
     </label>

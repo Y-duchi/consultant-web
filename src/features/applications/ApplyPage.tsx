@@ -19,6 +19,11 @@ const toList = (value: string) =>
     .map((item) => item.trim())
     .filter(Boolean);
 
+const normalizePriceInput = (value: string) => {
+  const digits = value.replace(/\D/g, "");
+  return digits.replace(/^0+(?=\d)/, "");
+};
+
 export function ApplyPage() {
   const [partnerType, setPartnerType] = useState<PartnerType>("business");
   const [businessName, setBusinessName] = useState("AURA 성수 메이크업 스튜디오");
@@ -36,10 +41,10 @@ export function ApplyPage() {
   const [categories, setCategories] = useState("퍼스널컬러, 메이크업");
   const [introduction, setIntroduction] = useState("앱 AI 리포트를 함께 보며 바로 따라 할 수 있는 메이크업 처방을 제공합니다.");
   const [consultingModes, setConsultingModes] = useState<ConsultingMode[]>(["online"]);
-  const [onlinePrice30Min, setOnlinePrice30Min] = useState(19000);
-  const [onlinePrice60Min, setOnlinePrice60Min] = useState(34000);
-  const [offlinePrice30Min, setOfflinePrice30Min] = useState(29000);
-  const [offlinePrice60Min, setOfflinePrice60Min] = useState(49000);
+  const [onlinePrice30Min, setOnlinePrice30Min] = useState("19000");
+  const [onlinePrice60Min, setOnlinePrice60Min] = useState("34000");
+  const [offlinePrice30Min, setOfflinePrice30Min] = useState("29000");
+  const [offlinePrice60Min, setOfflinePrice60Min] = useState("49000");
   const [offlineAddress, setOfflineAddress] = useState("서울 성동구 연무장길 8");
   const [offlineDetailAddress, setOfflineDetailAddress] = useState("3층 AURA 상담룸");
   const [offlineLocationNote, setOfflineLocationNote] = useState("성수역 3번 출구 도보 4분, 건물 뒤편 유료 주차 가능");
@@ -56,7 +61,17 @@ export function ApplyPage() {
   const beautyLicenseFileName = beautyLicenseFile?.name ?? "";
   const additionalCertificateFileNames = additionalCertificateFiles.map((file) => file.name);
   const requiredDocumentsReady = Boolean(businessRegistrationFile);
-  const canSubmit = Boolean(emailVerificationToken) && requiredDocumentsReady && consultingModes.length > 0 && (!hasOfflineConsulting || offlineAddress.trim().length > 0);
+  const requiredPricesReady = (
+    (!hasOnlineConsulting || (onlinePrice30Min !== "" && onlinePrice60Min !== ""))
+    && (!hasOfflineConsulting || (offlinePrice30Min !== "" && offlinePrice60Min !== ""))
+  );
+  const requiredProfileReady = Boolean(businessName.trim() && ownerName.trim() && phone.trim());
+  const canSubmit = Boolean(emailVerificationToken)
+    && requiredProfileReady
+    && requiredDocumentsReady
+    && requiredPricesReady
+    && consultingModes.length > 0
+    && (!hasOfflineConsulting || offlineAddress.trim().length > 0);
 
   const updateEmail = (value: string) => {
     setEmail(value);
@@ -124,12 +139,12 @@ export function ApplyPage() {
         categories: toList(categories),
         introduction,
         consultingModes,
-        price30Min: hasOnlineConsulting ? onlinePrice30Min : offlinePrice30Min,
-        price60Min: hasOnlineConsulting ? onlinePrice60Min : offlinePrice60Min,
-        onlinePrice30Min: hasOnlineConsulting ? onlinePrice30Min : undefined,
-        onlinePrice60Min: hasOnlineConsulting ? onlinePrice60Min : undefined,
-        offlinePrice30Min: hasOfflineConsulting ? offlinePrice30Min : undefined,
-        offlinePrice60Min: hasOfflineConsulting ? offlinePrice60Min : undefined,
+        price30Min: Number(hasOnlineConsulting ? onlinePrice30Min : offlinePrice30Min),
+        price60Min: Number(hasOnlineConsulting ? onlinePrice60Min : offlinePrice60Min),
+        onlinePrice30Min: hasOnlineConsulting ? Number(onlinePrice30Min) : undefined,
+        onlinePrice60Min: hasOnlineConsulting ? Number(onlinePrice60Min) : undefined,
+        offlinePrice30Min: hasOfflineConsulting ? Number(offlinePrice30Min) : undefined,
+        offlinePrice60Min: hasOfflineConsulting ? Number(offlinePrice60Min) : undefined,
         offlineAddress: hasOfflineConsulting ? offlineAddress : undefined,
         offlineDetailAddress: hasOfflineConsulting ? offlineDetailAddress : undefined,
         offlineLocationNote: hasOfflineConsulting ? offlineLocationNote : undefined,
@@ -227,26 +242,26 @@ export function ApplyPage() {
 
         <form className="login-form" onSubmit={handleSubmit}>
           <div className="form-grid">
-            <Field label="업체 유형">
-              <SelectInput value={partnerType} onChange={(event) => setPartnerType(event.target.value as PartnerType)}>
+            <Field label="업체 유형" required>
+              <SelectInput value={partnerType} onChange={(event) => setPartnerType(event.target.value as PartnerType)} required>
                 <option value="business">사업자 업체</option>
                 <option value="freelancer">프리랜서 전문가</option>
               </SelectInput>
             </Field>
-            <Field label={partnerType === "business" ? "업체명" : "활동명"}>
+            <Field label={partnerType === "business" ? "업체명" : "활동명"} required>
               <TextInput value={businessName} onChange={(event) => setBusinessName(event.target.value)} required />
             </Field>
-            <Field label="대표자명">
+            <Field label="대표자명" required>
               <TextInput value={ownerName} onChange={(event) => setOwnerName(event.target.value)} required />
             </Field>
             <Field label="사업자등록번호">
               <TextInput value={businessRegistrationNumber} onChange={(event) => setBusinessRegistrationNumber(event.target.value)} />
             </Field>
-            <Field label="연락처">
+            <Field label="연락처" required>
               <TextInput value={phone} onChange={(event) => setPhone(event.target.value)} required />
             </Field>
             <div className="field span-2">
-              <span>이메일 인증</span>
+              <span>이메일 인증<span className="field-required" aria-hidden="true">*</span></span>
               <div className="email-verification-row">
                 <TextInput type="email" value={email} onChange={(event) => updateEmail(event.target.value)} required disabled={Boolean(emailVerificationToken)} />
                 <Button type="button" variant="secondary" icon={<Send size={16} />} onClick={sendVerificationCode} disabled={!email.trim() || isSendingVerification || Boolean(emailVerificationToken)}>
@@ -271,7 +286,7 @@ export function ApplyPage() {
               <TextInput value={categories} onChange={(event) => setCategories(event.target.value)} />
             </Field>
             <div className="field span-2">
-              <span>상담 방식</span>
+              <span>상담 방식<span className="field-required" aria-hidden="true">*</span></span>
               <div className="mode-option-grid">
                 <label className={`mode-option ${hasOnlineConsulting ? "selected" : ""}`}>
                   <input
@@ -301,23 +316,23 @@ export function ApplyPage() {
             </div>
             {hasOnlineConsulting ? (
               <>
-                <Field label="온라인 30분 가격">
-                  <TextInput type="number" value={onlinePrice30Min} onChange={(event) => setOnlinePrice30Min(Number(event.target.value))} min={0} />
+                <Field label="온라인 30분 가격" required>
+                  <TextInput type="text" inputMode="numeric" pattern="[0-9]*" value={onlinePrice30Min} onChange={(event) => setOnlinePrice30Min(normalizePriceInput(event.target.value))} required />
                 </Field>
-                <Field label="온라인 1시간 가격">
-                  <TextInput type="number" value={onlinePrice60Min} onChange={(event) => setOnlinePrice60Min(Number(event.target.value))} min={0} />
+                <Field label="온라인 1시간 가격" required>
+                  <TextInput type="text" inputMode="numeric" pattern="[0-9]*" value={onlinePrice60Min} onChange={(event) => setOnlinePrice60Min(normalizePriceInput(event.target.value))} required />
                 </Field>
               </>
             ) : null}
             {hasOfflineConsulting ? (
               <>
-                <Field label="오프라인 30분 가격">
-                  <TextInput type="number" value={offlinePrice30Min} onChange={(event) => setOfflinePrice30Min(Number(event.target.value))} min={0} />
+                <Field label="오프라인 30분 가격" required>
+                  <TextInput type="text" inputMode="numeric" pattern="[0-9]*" value={offlinePrice30Min} onChange={(event) => setOfflinePrice30Min(normalizePriceInput(event.target.value))} required />
                 </Field>
-                <Field label="오프라인 1시간 가격">
-                  <TextInput type="number" value={offlinePrice60Min} onChange={(event) => setOfflinePrice60Min(Number(event.target.value))} min={0} />
+                <Field label="오프라인 1시간 가격" required>
+                  <TextInput type="text" inputMode="numeric" pattern="[0-9]*" value={offlinePrice60Min} onChange={(event) => setOfflinePrice60Min(normalizePriceInput(event.target.value))} required />
                 </Field>
-                <Field label="오프라인 주소" hint="방문 상담을 제공하는 경우 필수">
+                <Field label="오프라인 주소" hint="방문 상담을 제공하는 경우 필수" required>
                   <TextInput value={offlineAddress} onChange={(event) => setOfflineAddress(event.target.value)} required={hasOfflineConsulting} />
                 </Field>
                 <Field label="상세 주소">
@@ -334,7 +349,7 @@ export function ApplyPage() {
           </div>
 
           <div className="document-upload-grid">
-            <Field label="사업자등록증 PDF" hint="필수 서류">
+            <Field label="사업자등록증 PDF" hint="필수 서류" required>
               <input className="control" type="file" accept="application/pdf" required onChange={updateFile(setBusinessRegistrationFile)} />
             </Field>
             <Field label="국가 미용사 면허증 PDF" hint="선택 서류">
