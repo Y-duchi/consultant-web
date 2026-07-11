@@ -6,7 +6,7 @@
     },
     {
       "source": "/api/partner-applications",
-      "destination": "https://d3t1pbvtir1lj.cloudfront.net/api/partner-applications"
+      "destination": "https://d3t1pbvtir1lj.cloudfront.net/api/partner-applications/"
     },
     {
       "source": "/api/partner-applications/:path*",
