@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plug, Save } from "lucide-react";
+import { CalendarOff, CheckCircle2, Clock3, Plug, Save, X } from "lucide-react";
 import { getBusinessProfile, getSettings, updateBusinessProfile, updateSettings } from "../../services/api";
 import { useAuth } from "../auth/AuthContext";
 import { Badge } from "../../shared/ui/Badge";
@@ -8,7 +8,7 @@ import { Button } from "../../shared/ui/Button";
 import { Field, SelectInput, TextArea, TextInput } from "../../shared/ui/Field";
 import { PageHeader } from "../../shared/ui/PageHeader";
 import { ErrorState, LoadingState } from "../../shared/ui/StateViews";
-import type { ManagerSettings, OperatingHours } from "../../types/domain";
+import type { ManagerSettings, OperatingHours, TemporaryBookingBlock } from "../../types/domain";
 
 export function SettingsPage() {
   const { user } = useAuth();
@@ -21,6 +21,8 @@ export function SettingsPage() {
   const [settingsDraft, setSettingsDraft] = useState<Partial<ManagerSettings>>({});
   const [policyDraft, setPolicyDraft] = useState({ cancellationPolicy: "", refundPolicy: "" });
   const [holidayDraft, setHolidayDraft] = useState("");
+  const [temporaryBlockDraft, setTemporaryBlockDraft] = useState({ date: toDateInputValue(new Date()), startsAt: "10:00", endsAt: "11:00", reason: "개인 일정" });
+  const [settingsFeedback, setSettingsFeedback] = useState<string | null>(null);
 
   useEffect(() => {
     if (settingsQuery.data) setSettingsDraft(settingsQuery.data);
@@ -36,7 +38,12 @@ export function SettingsPage() {
 
   const settingsMutation = useMutation({
     mutationFn: () => updateSettings(settingsDraft, user ?? undefined),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings"] }),
+    onSuccess: (settings) => {
+      setSettingsDraft(settings);
+      setSettingsFeedback("저장되었습니다. 예약 캘린더에 바로 반영됩니다.");
+      queryClient.invalidateQueries({ queryKey: ["settings"] });
+    },
+    onError: (error) => setSettingsFeedback(error instanceof Error ? error.message : "저장하지 못했습니다. 다시 시도해 주세요."),
   });
   const policyMutation = useMutation({
     mutationFn: () => updateBusinessProfile(policyDraft, user ?? undefined),
@@ -50,6 +57,28 @@ export function SettingsPage() {
   const operatingHours = settingsDraft.operatingHours ?? [];
   const notification = settingsDraft.notification;
   const integrations = settingsDraft.integrations;
+  const temporaryBlocks = settingsDraft.temporaryBookingBlocks ?? [];
+  const saveSettings = () => {
+    setSettingsFeedback(null);
+    settingsMutation.mutate();
+  };
+  const addTemporaryBlock = () => {
+    if (!temporaryBlockDraft.date || !temporaryBlockDraft.startsAt || !temporaryBlockDraft.endsAt) {
+      setSettingsFeedback("차단할 날짜와 시작·종료 시간을 모두 입력해 주세요.");
+      return;
+    }
+    if (temporaryBlockDraft.startsAt >= temporaryBlockDraft.endsAt) {
+      setSettingsFeedback("종료 시간은 시작 시간 이후여야 합니다.");
+      return;
+    }
+    const block: TemporaryBookingBlock = { id: `temporary-block-${Date.now()}`, ...temporaryBlockDraft };
+    if (temporaryBlocks.some((item) => item.date === block.date && item.startsAt === block.startsAt && item.endsAt === block.endsAt)) {
+      setSettingsFeedback("같은 날짜와 시간의 차단 일정이 이미 있습니다.");
+      return;
+    }
+    setSettingsDraft((prev) => ({ ...prev, temporaryBookingBlocks: [...(prev.temporaryBookingBlocks ?? []), block] }));
+    setSettingsFeedback("일회성 차단 일정을 추가했습니다. 아래 저장 버튼을 눌러 적용해 주세요.");
+  };
 
   return (
     <>
@@ -64,7 +93,7 @@ export function SettingsPage() {
           <div className="panel-header">
             <div>
               <h2>영업시간 기본 설정</h2>
-              <p>예약 캘린더의 기본 가능 시간으로 사용됩니다.</p>
+              <p>매주 반복되는 기본 가능 시간입니다. 특정 날짜만 막으려면 오른쪽의 일회성 예약 차단을 사용하세요.</p>
             </div>
           </div>
           <div className="panel-body settings-section">
@@ -90,9 +119,63 @@ export function SettingsPage() {
                 }
               />
             ))}
-            <Button variant="primary" icon={<Save size={16} />} onClick={() => settingsMutation.mutate()}>
-              영업시간 저장
+            <SaveSettingsButton isPending={settingsMutation.isPending} label="영업시간 저장" onClick={saveSettings} />
+            <SettingsFeedback isError={settingsMutation.isError} message={settingsFeedback} />
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <h2>일회성 예약 차단</h2>
+              <p>이번 주처럼 특정 날짜·시간에만 예약을 막습니다. 영업시간에는 영향을 주지 않고 반복되지 않습니다.</p>
+            </div>
+            <CalendarOff size={18} />
+          </div>
+          <div className="panel-body settings-section">
+            <div className="temporary-block-form">
+              <Field label="날짜">
+                <TextInput type="date" value={temporaryBlockDraft.date} onChange={(event) => setTemporaryBlockDraft((prev) => ({ ...prev, date: event.target.value }))} />
+              </Field>
+              <Field label="시작">
+                <TextInput type="time" value={temporaryBlockDraft.startsAt} onChange={(event) => setTemporaryBlockDraft((prev) => ({ ...prev, startsAt: event.target.value }))} />
+              </Field>
+              <Field label="종료">
+                <TextInput type="time" value={temporaryBlockDraft.endsAt} onChange={(event) => setTemporaryBlockDraft((prev) => ({ ...prev, endsAt: event.target.value }))} />
+              </Field>
+              <Field label="사유 (선택)">
+                <TextInput maxLength={60} placeholder="예: 외부 일정" value={temporaryBlockDraft.reason} onChange={(event) => setTemporaryBlockDraft((prev) => ({ ...prev, reason: event.target.value }))} />
+              </Field>
+            </div>
+            <Button icon={<Clock3 size={16} />} variant="secondary" onClick={addTemporaryBlock}>
+              차단 시간 추가
             </Button>
+            {temporaryBlocks.length ? (
+              <div aria-label="저장할 일회성 예약 차단 시간" className="temporary-block-list">
+                {temporaryBlocks.slice().sort((a, b) => `${a.date}${a.startsAt}`.localeCompare(`${b.date}${b.startsAt}`)).map((block) => (
+                  <div className="temporary-block-item" key={block.id}>
+                    <div>
+                      <strong>{formatBlockDate(block.date)} · {block.startsAt}–{block.endsAt}</strong>
+                      <span>{block.reason || "예약 불가"}</span>
+                    </div>
+                    <Button
+                      aria-label={`${block.date} ${block.startsAt} 예약 차단 삭제`}
+                      icon={<X size={15} />}
+                      type="button"
+                      variant="ghost"
+                      onClick={() => {
+                        setSettingsDraft((prev) => ({ ...prev, temporaryBookingBlocks: (prev.temporaryBookingBlocks ?? []).filter((item) => item.id !== block.id) }));
+                        setSettingsFeedback("차단 일정을 제거했습니다. 아래 저장 버튼을 눌러 적용해 주세요.");
+                      }}
+                    >
+                      삭제
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : <div className="temporary-block-empty">등록된 일회성 차단 시간이 없습니다.</div>}
+            <SaveSettingsButton isPending={settingsMutation.isPending} label="일회성 차단 저장" onClick={saveSettings} />
+            <SettingsFeedback isError={settingsMutation.isError} message={settingsFeedback} />
           </div>
         </section>
 
@@ -102,27 +185,23 @@ export function SettingsPage() {
           </div>
           <div className="panel-body settings-section">
             <div className="form-grid">
-              <Field label="휴무일 추가">
+              <Field label="하루 전체 휴무일 추가">
                 <TextInput type="date" value={holidayDraft} onChange={(event) => setHolidayDraft(event.target.value)} />
               </Field>
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  if (!holidayDraft) return;
-                  const next = Array.from(new Set([...(settingsDraft.holidays ?? []), holidayDraft]));
-                  setSettingsDraft((prev) => ({ ...prev, holidays: next }));
-                  setHolidayDraft("");
-                }}
-              >
+              <Button variant="secondary" onClick={() => {
+                if (!holidayDraft) return;
+                setSettingsDraft((prev) => ({ ...prev, holidays: Array.from(new Set([...(prev.holidays ?? []), holidayDraft])) }));
+                setHolidayDraft("");
+                setSettingsFeedback("휴무일을 추가했습니다. 아래 저장 버튼을 눌러 적용해 주세요.");
+              }}>
                 추가
               </Button>
             </div>
             <div className="tag-list">
               {(settingsDraft.holidays ?? []).map((date) => <span className="tag" key={date}>{date}</span>)}
             </div>
-            <Button variant="primary" icon={<Save size={16} />} onClick={() => settingsMutation.mutate()}>
-              휴무일 저장
-            </Button>
+            <SaveSettingsButton isPending={settingsMutation.isPending} label="휴무일 저장" onClick={saveSettings} />
+            <SettingsFeedback isError={settingsMutation.isError} message={settingsFeedback} />
           </div>
         </section>
       </div>
@@ -172,9 +251,8 @@ export function SettingsPage() {
             ) : null}
           </div>
           <div className="drawer-footer">
-            <Button variant="primary" icon={<Save size={16} />} onClick={() => settingsMutation.mutate()}>
-              알림 저장
-            </Button>
+            <SaveSettingsButton isPending={settingsMutation.isPending} label="알림 저장" onClick={saveSettings} />
+            <SettingsFeedback isError={settingsMutation.isError} message={settingsFeedback} />
           </div>
         </section>
       </div>
@@ -246,9 +324,8 @@ export function SettingsPage() {
                     <option value="stream">Stream</option>
                   </SelectInput>
                 </Field>
-                <Button variant="primary" icon={<Save size={16} />} onClick={() => settingsMutation.mutate()}>
-                  연동 설정 저장
-                </Button>
+                <SaveSettingsButton isPending={settingsMutation.isPending} label="연동 설정 저장" onClick={saveSettings} />
+                <SettingsFeedback isError={settingsMutation.isError} message={settingsFeedback} />
               </>
             ) : null}
           </div>
@@ -267,28 +344,62 @@ const notificationLabel = {
 
 function OperatingHourRow({ hour, onChange }: { hour: OperatingHours; onChange: (hour: OperatingHours) => void }) {
   return (
-    <div className="form-grid">
-      <Field label="요일">
-        <TextInput value={hour.label} disabled />
-      </Field>
-      <Field label="운영 여부">
-        <SelectInput value={hour.isClosed ? "closed" : "open"} onChange={(event) => onChange({ ...hour, isClosed: event.target.value === "closed" })}>
-          <option value="open">영업</option>
-          <option value="closed">휴무</option>
-        </SelectInput>
-      </Field>
-      <Field label="오픈">
-        <TextInput type="time" value={hour.opensAt} onChange={(event) => onChange({ ...hour, opensAt: event.target.value })} disabled={hour.isClosed} />
-      </Field>
-      <Field label="마감">
-        <TextInput type="time" value={hour.closesAt} onChange={(event) => onChange({ ...hour, closesAt: event.target.value })} disabled={hour.isClosed} />
-      </Field>
-      <Field label="점심 시작">
-        <TextInput type="time" value={hour.lunchStart ?? ""} onChange={(event) => onChange({ ...hour, lunchStart: event.target.value })} disabled={hour.isClosed} />
-      </Field>
-      <Field label="점심 종료">
-        <TextInput type="time" value={hour.lunchEnd ?? ""} onChange={(event) => onChange({ ...hour, lunchEnd: event.target.value })} disabled={hour.isClosed} />
-      </Field>
+    <section className={`operating-hour-card day-${hour.dayOfWeek} ${hour.isClosed ? "is-closed" : ""}`}>
+      <header className="operating-hour-card-header">
+        <div>
+          <strong>{hour.label}요일</strong>
+          <span>{hour.isClosed ? "매주 휴무" : "매주 예약 가능"}</span>
+        </div>
+        <Field label="운영 여부">
+          <SelectInput value={hour.isClosed ? "closed" : "open"} onChange={(event) => onChange({ ...hour, isClosed: event.target.value === "closed" })}>
+            <option value="open">영업</option>
+            <option value="closed">휴무</option>
+          </SelectInput>
+        </Field>
+      </header>
+      <div className="operating-hour-time-grid">
+        <Field label="예약 시작">
+          <TextInput type="time" value={hour.opensAt} onChange={(event) => onChange({ ...hour, opensAt: event.target.value })} disabled={hour.isClosed} />
+        </Field>
+        <Field label="예약 마감">
+          <TextInput type="time" value={hour.closesAt} onChange={(event) => onChange({ ...hour, closesAt: event.target.value })} disabled={hour.isClosed} />
+        </Field>
+        <Field label="점심 시작">
+          <TextInput type="time" value={hour.lunchStart ?? ""} onChange={(event) => onChange({ ...hour, lunchStart: event.target.value })} disabled={hour.isClosed} />
+        </Field>
+        <Field label="점심 종료">
+          <TextInput type="time" value={hour.lunchEnd ?? ""} onChange={(event) => onChange({ ...hour, lunchEnd: event.target.value })} disabled={hour.isClosed} />
+        </Field>
+      </div>
+    </section>
+  );
+}
+
+function SaveSettingsButton({ isPending, label, onClick }: { isPending: boolean; label: string; onClick: () => void }) {
+  return (
+    <Button disabled={isPending} icon={isPending ? <Clock3 size={16} /> : <Save size={16} />} onClick={onClick} variant="primary">
+      {isPending ? "저장 중…" : label}
+    </Button>
+  );
+}
+
+function SettingsFeedback({ isError, message }: { isError: boolean; message: string | null }) {
+  if (!message) return null;
+  return (
+    <div className={`settings-save-feedback ${isError ? "is-error" : ""}`} role="status">
+      {isError ? <X size={16} /> : <CheckCircle2 size={16} />}
+      <span>{message}</span>
     </div>
   );
+}
+
+function toDateInputValue(date: Date) {
+  const timezoneOffset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - timezoneOffset).toISOString().slice(0, 10);
+}
+
+function formatBlockDate(date: string) {
+  const parsed = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return date;
+  return new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric", weekday: "short" }).format(parsed);
 }

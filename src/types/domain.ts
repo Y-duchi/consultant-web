@@ -183,12 +183,15 @@ export interface Customer {
   totalPaidAmount: number;
   riskFlags: string[];
   preferredChannel: "chat" | "phone" | "sms";
+  latestBookingStatus?: BookingStatus;
   attachments: Attachment[];
 }
 
 export interface Booking {
   id: string;
   customerId: string;
+  /** Name entered for this reservation; unlike customerId, it can differ between bookings. */
+  customerName?: string;
   expertId: string;
   businessId: string;
   startsAt: string;
@@ -204,6 +207,8 @@ export interface Booking {
   requestMemo: string;
   selectedConcernTags: string[];
   internalMemo: string;
+  /** Short customer-facing status copy for the mobile/app booking surface. */
+  customerNotice?: string;
   sharedReportIds: string[];
   consultationSummaryId?: string;
   refundRequestId?: string;
@@ -426,6 +431,8 @@ export interface UrgentTask {
 export interface ManagerSettings {
   operatingHours: OperatingHours[];
   holidays: string[];
+  /** A date-specific closure. Unlike operatingHours, it never repeats weekly. */
+  temporaryBookingBlocks: TemporaryBookingBlock[];
   bookingOpenMonths: number;
   notification: {
     bookingCreated: boolean;
@@ -447,6 +454,14 @@ export interface ManagerSettings {
   }>;
 }
 
+export interface TemporaryBookingBlock {
+  id: string;
+  date: string;
+  startsAt: string;
+  endsAt: string;
+  reason?: string;
+}
+
 export interface BookingFilters {
   query?: string;
   status?: BookingStatus | "all";
@@ -459,6 +474,7 @@ export interface BookingFilters {
 export interface CustomerFilters {
   query?: string;
   tag?: string;
+  status?: BookingStatus | "all";
   sort?: "lastActiveDesc" | "nameAsc" | "paidDesc";
 }
 

@@ -52,6 +52,19 @@ export type ConsultingServerSocketEvent =
   | ConsultingCaptionTranslationEvent
   | {
       bookingId: string;
+      message: string;
+      status: string;
+      type: "booking.status";
+    }
+  | {
+      bookingId: string;
+      callSessionId?: string | null;
+      message: string;
+      status: "started" | "ended";
+      type: "call.status";
+    }
+  | {
+      bookingId: string;
       clientMessageId: string;
       messageId: string;
       sentAt: string;
@@ -129,6 +142,7 @@ type ConnectOptions = {
 
 export type ConsultingConversationSocketClient = {
   close: () => void;
+  reconnect: () => void;
   send: (event: ConsultingClientSocketEvent) => boolean;
   sendMessage: (payload: {
     body: string;
@@ -141,6 +155,7 @@ export type ConsultingConversationSocketClient = {
 
 const INITIAL_RECONNECT_DELAY_MS = 500;
 const MAX_RECONNECT_DELAY_MS = 5000;
+const MAX_RECONNECT_ATTEMPTS = 7;
 
 function getConsultingRealtimeApiBaseUrl() {
   const explicit = import.meta.env.VITE_CONSULTING_API_BASE_URL?.trim();
@@ -227,6 +242,10 @@ export function connectConsultingConversationSocket({
   const scheduleReconnect = () => {
     clearReconnectTimer();
     reconnectAttempt += 1;
+    if (reconnectAttempt > MAX_RECONNECT_ATTEMPTS) {
+      setStatus("offline");
+      return;
+    }
     setStatus("reconnecting");
     const delay = Math.min(INITIAL_RECONNECT_DELAY_MS * 2 ** Math.max(0, reconnectAttempt - 1), MAX_RECONNECT_DELAY_MS);
     reconnectTimer = window.setTimeout(connect, delay);
@@ -278,6 +297,18 @@ export function connectConsultingConversationSocket({
       socket?.close();
       socket = null;
       setStatus("idle");
+    },
+    reconnect: () => {
+      if (closedByClient) return;
+      reconnectAttempt = 0;
+      clearReconnectTimer();
+      if (socket) {
+        socket.onerror = null;
+        socket.onclose = null;
+        socket.close();
+      }
+      socket = null;
+      connect();
     },
     send,
     sendCaptionTranslation: (payload) => send({ ...payload, type: "caption.translation" }),

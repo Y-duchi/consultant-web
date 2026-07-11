@@ -1,14 +1,18 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BellRing, FileImage, Phone, Search, Send } from "lucide-react";
+import { BellRing, FileImage, Mic, MicOff, Phone, PhoneOff, Search, Send, Video, VideoOff } from "lucide-react";
 import {
+  endBookingCall,
   getChatThreadDetail,
   getChatThreads,
   getPartnerSessionToken,
+  joinBookingCall,
   markChatThreadRead,
+  sendMessage as sendChatText,
   uploadChatAttachment,
 } from "../../services/api";
+import { startWebChimeMeeting, type WebChimeMeetingController } from "../../services/chimeMeetingClient";
 import {
   connectConsultingConversationSocket,
   type ConsultingConversationSocketClient,
@@ -29,12 +33,16 @@ import { AppReportCard } from "../reports/AppReportCard";
 
 export function ChatPage() {
   const { user } = useAuth();
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastMarkedReadThreadRef = useRef<string | null>(null);
+  const lastAppliedComposeRef = useRef<string | null>(null);
   const socketRef = useRef<ConsultingConversationSocketClient | null>(null);
+  const callControllerRef = useRef<WebChimeMeetingController | null>(null);
+  const callRemoteVideoRef = useRef<HTMLVideoElement | null>(null);
+  const callLocalVideoRef = useRef<HTMLVideoElement | null>(null);
+  const callAudioRef = useRef<HTMLAudioElement | null>(null);
   const [query, setQuery] = useState("");
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
@@ -43,16 +51,51 @@ export function ChatPage() {
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
   const [realtimeNotice, setRealtimeNotice] = useState<string | null>(null);
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
+  const [callOpen, setCallOpen] = useState(false);
+  const [callStatus, setCallStatus] = useState("화상통화 시작 전");
+  const [callError, setCallError] = useState("");
+  const [callMuted, setCallMuted] = useState(false);
+  const [callVideoEnabled, setCallVideoEnabled] = useState(true);
   const requestedBookingId = searchParams.get("bookingId")?.trim() ?? "";
+  const composeTemplate = searchParams.get("compose")?.trim() ?? "";
+  const chatThreadsQueryKey = useMemo(
+    () => ["chat-threads", user?.id, user?.businessId, user?.expertId, user?.workspaceScope] as const,
+    [user?.businessId, user?.expertId, user?.id, user?.workspaceScope],
+  );
+  const partnerSessionToken = getPartnerSessionToken();
   const uploadMutation = useMutation({
     mutationFn: (file: File) => uploadChatAttachment(file, user ?? undefined),
     onSuccess: (attachment) => {
       setPendingAttachments((current) => [...current, attachment]);
     },
   });
+  const joinCallMutation = useMutation({
+    mutationFn: (bookingId: string) => joinBookingCall(bookingId, "ko-KR", user ?? undefined),
+    onSuccess: async (result) => {
+      if (!callRemoteVideoRef.current || !callLocalVideoRef.current || !callAudioRef.current) {
+        setCallError("화상통화 화면을 준비하지 못했습니다. 창을 닫고 다시 시도해 주세요.");
+        return;
+      }
+      try {
+        setCallStatus("카메라와 마이크를 연결하는 중입니다.");
+        callControllerRef.current = await startWebChimeMeeting(result, {
+          remoteVideoElement: callRemoteVideoRef.current,
+          localVideoElement: callLocalVideoRef.current,
+          audioElement: callAudioRef.current,
+          onStatusChange: setCallStatus,
+        });
+        setCallStatus("화상통화 방이 열렸습니다. 고객의 입장을 기다리고 있습니다.");
+      } catch (error) {
+        setCallError(error instanceof Error ? error.message : "Chime 화상통화 연결에 실패했습니다.");
+      }
+    },
+    onError: (error) => {
+      setCallError(error instanceof Error ? error.message : "Chime 미팅 생성에 실패했습니다.");
+    },
+  });
 
   const threadsQuery = useQuery({
-    queryKey: ["chat-threads", user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
+    queryKey: chatThreadsQueryKey,
     queryFn: () => getChatThreads(user ?? undefined),
   });
   const filteredThreads = useMemo(() => {
@@ -85,12 +128,21 @@ export function ChatPage() {
     const override = new URLSearchParams(window.location.search).get("bookingId")?.trim();
     return override || activeBookingId;
   }, [activeBookingId]);
-
   useEffect(() => {
     setLiveMessages(detail?.messages ?? []);
     setPendingAttachments([]);
     setSelectedReportId(null);
   }, [detail?.thread.id]);
+
+  useEffect(() => {
+    if (!composeTemplate || !detail?.booking?.id || detail.booking.id !== requestedBookingId) return;
+    const composeKey = `${detail.booking.id}:${composeTemplate}`;
+    if (lastAppliedComposeRef.current === composeKey) return;
+    lastAppliedComposeRef.current = composeKey;
+    setMessage(composeTemplate);
+    setRealtimeNotice("입금 안내 문구를 채웠습니다. 계좌 정보를 확인한 뒤 전송하세요.");
+    window.setTimeout(() => setRealtimeNotice(null), 5200);
+  }, [composeTemplate, detail?.booking?.id, requestedBookingId]);
 
   useEffect(() => {
     if (!detail?.thread.id || lastMarkedReadThreadRef.current === detail.thread.id) return;
@@ -156,6 +208,21 @@ export function ChatPage() {
           }
         }
 
+        if (event.type === "booking.status") {
+          setRealtimeNotice(event.message);
+          window.setTimeout(() => setRealtimeNotice(null), 5200);
+          void threadsQuery.refetch();
+          void detailQuery.refetch();
+          queryClient.invalidateQueries({ queryKey: ["bookings"] });
+          queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+        }
+
+        if (event.type === "call.status") {
+          setRealtimeNotice(event.message);
+          window.setTimeout(() => setRealtimeNotice(null), 5200);
+          void detailQuery.refetch();
+        }
+
         if (event.type === "error" && event.clientMessageId) {
           setLiveMessages((current) =>
             current.map((item) =>
@@ -168,7 +235,7 @@ export function ChatPage() {
       },
       onStatusChange: setSocketStatus,
       participantType: getParticipantType(user),
-      authToken: getPartnerSessionToken(),
+      authToken: partnerSessionToken,
     });
     socketRef.current = client;
 
@@ -178,18 +245,40 @@ export function ChatPage() {
         socketRef.current = null;
       }
     };
-  }, [detail, socketBookingId, user]);
+  }, [detail, partnerSessionToken, socketBookingId, user]);
 
-  const sendLiveMessage = (targetMessage: LiveChatMessage) => {
-    if (!socketBookingId) return false;
-    return Boolean(
-      socketRef.current?.sendMessage({
-        bookingId: socketBookingId,
-        body: targetMessage.body,
-        clientMessageId: targetMessage.clientMessageId ?? targetMessage.id,
-        mediaIds: targetMessage.attachments.map((attachment) => attachment.id),
-      }),
-    );
+  const sendLiveMessage = async (targetMessage: LiveChatMessage) => {
+    if (!socketBookingId || !detail) return false;
+    const clientMessageId = targetMessage.clientMessageId ?? targetMessage.id;
+    const sentBySocket = socketRef.current?.sendMessage({
+      bookingId: socketBookingId,
+      body: targetMessage.body,
+      clientMessageId,
+      mediaIds: targetMessage.attachments.map((attachment) => attachment.id),
+    });
+    if (sentBySocket) return true;
+
+    try {
+      const delivered = await sendChatText(
+        detail.thread.id,
+        targetMessage.body,
+        targetMessage.attachments.map((attachment) => attachment.id),
+        user ?? undefined,
+        clientMessageId,
+      );
+      setLiveMessages((current) =>
+        current.map((item) =>
+          item.clientMessageId === clientMessageId
+            ? { ...item, id: delivered.id, sentAt: delivered.sentAt, deliveryStatus: "sent" }
+            : item,
+        ),
+      );
+      setRealtimeNotice("실시간 연결이 끊겨 일반 메시지 전송으로 처리했습니다.");
+      window.setTimeout(() => setRealtimeNotice(null), 4200);
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   const retryMessage = (targetMessage: LiveChatMessage) => {
@@ -201,7 +290,8 @@ export function ChatPage() {
       ),
     );
 
-    if (!sendLiveMessage(targetMessage)) {
+    void sendLiveMessage(targetMessage).then((sent) => {
+      if (sent) return;
       setLiveMessages((current) =>
         current.map((item) =>
           item.clientMessageId === targetMessage.clientMessageId
@@ -209,13 +299,13 @@ export function ChatPage() {
             : item,
         ),
       );
-    }
+    });
   };
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
     const body = message.trim();
-    if ((!body && pendingAttachments.length === 0) || !activeThreadId || !detail || !socketBookingId || socketStatus !== "connected" || isClosedBooking) return;
+    if ((!body && pendingAttachments.length === 0) || !activeThreadId || !detail || !socketBookingId || isClosedBooking) return;
     const clientMessageId = createClientMessageId();
     const nextMessage: LiveChatMessage = {
       id: clientMessageId,
@@ -232,13 +322,14 @@ export function ChatPage() {
     setMessage("");
     setPendingAttachments([]);
 
-    if (!sendLiveMessage(nextMessage)) {
+    void sendLiveMessage(nextMessage).then((sent) => {
+      if (sent) return;
       setLiveMessages((current) =>
         current.map((item) =>
           item.clientMessageId === clientMessageId ? { ...item, deliveryStatus: "failed" } : item,
         ),
       );
-    }
+    });
   };
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -248,22 +339,66 @@ export function ChatPage() {
     uploadMutation.mutate(file);
   };
 
+  const openVideoCall = () => {
+    if (!detail?.booking) return;
+    if (!canStartVideoCall(detail.booking.status, detail.booking.channel)) {
+      setRealtimeNotice("예약 확정 후 내 채팅에서 화상통화를 시작할 수 있습니다.");
+      window.setTimeout(() => setRealtimeNotice(null), 5200);
+      return;
+    }
+    setCallError("");
+    setCallStatus("Chime 화상통화 방을 만드는 중입니다.");
+    setCallOpen(true);
+    window.setTimeout(() => joinCallMutation.mutate(detail.booking!.id), 0);
+  };
+
+  const closeVideoCall = async () => {
+    await callControllerRef.current?.stop().catch(() => undefined);
+    callControllerRef.current = null;
+    setCallOpen(false);
+    setCallMuted(false);
+    setCallVideoEnabled(true);
+  };
+
+  const endVideoCall = async () => {
+    const bookingId = detail?.booking?.id;
+    await closeVideoCall();
+    if (!bookingId) return;
+    await endBookingCall(bookingId, user ?? undefined).catch((error: unknown) => {
+      setRealtimeNotice(error instanceof Error ? error.message : "화상통화를 종료하지 못했습니다.");
+    });
+  };
+
+  const toggleCallMuted = () => {
+    const nextMuted = !callMuted;
+    callControllerRef.current?.setMuted(nextMuted);
+    setCallMuted(nextMuted);
+  };
+
+  const toggleCallVideo = async () => {
+    const nextEnabled = !callVideoEnabled;
+    await callControllerRef.current?.setLocalVideoEnabled(nextEnabled);
+    setCallVideoEnabled(nextEnabled);
+  };
+
   if (threadsQuery.isLoading) return <LoadingState label="고객 대화를 불러오는 중입니다" />;
   if (threadsQuery.isError) return <ErrorState message={threadsQuery.error.message} onRetry={() => threadsQuery.refetch()} />;
 
   return (
-    <>
-      <PageHeader
-        eyebrow="Communication"
-        title="고객 대화"
-        description="예약 신청 후 생성된 채팅방에서 고객 문의, 선결제 또는 예약금 입금 확인, 앱 얼굴 리포트와 내부 메모를 함께 보며 응대합니다."
-      />
-      {realtimeNotice ? (
-        <div className="realtime-toast" role="status">
-          <BellRing size={16} />
-          <span>{realtimeNotice}</span>
-        </div>
-      ) : null}
+    <div className="chat-page">
+      <div className="chat-page-intro">
+        <PageHeader
+          eyebrow="Communication"
+          title="고객 대화"
+          description="예약 신청 후 생성된 채팅방에서 고객 문의, 선결제 또는 예약금 입금 확인, 앱 얼굴 리포트와 내부 메모를 함께 보며 응대합니다."
+        />
+        {realtimeNotice ? (
+          <div className="realtime-toast" role="status">
+            <BellRing size={16} />
+            <span>{realtimeNotice}</span>
+          </div>
+        ) : null}
+      </div>
 
       <section className="chat-layout">
         <aside className="thread-list">
@@ -295,7 +430,7 @@ export function ChatPage() {
           {filteredThreads.length === 0 ? <EmptyState title="대화가 없습니다" description="검색 조건을 조정해보세요." /> : null}
         </aside>
 
-        <main className="chat-main">
+        <main className={`chat-main ${isClosedBooking ? "has-closed" : ""}`}>
           <header className="chat-header">
             {detail ? (
               <>
@@ -306,13 +441,19 @@ export function ChatPage() {
                     <span>{detail.customer.phone} · 담당 {detail.expert.name} · {getSocketStatusLabel(socketStatus)}</span>
                   </div>
                 </div>
+                {socketStatus !== "connected" ? (
+                  <Button type="button" variant="ghost" onClick={() => socketRef.current?.reconnect()}>
+                    재연결
+                  </Button>
+                ) : null}
                 <Button
+                  type="button"
                   variant="secondary"
                   icon={<Phone size={16} />}
-                  onClick={() => detail.booking && navigate(`/workspace/bookings?bookingId=${detail.booking.id}&call=1`)}
+                  onClick={openVideoCall}
                   disabled={!detail.booking}
                 >
-                  전화
+                  화상통화
                 </Button>
               </>
             ) : (
@@ -320,14 +461,15 @@ export function ChatPage() {
             )}
           </header>
 
+          {isClosedBooking ? (
+            <div className="closed-thread-banner">
+              <strong>취소된 예약</strong>
+              <span>대화 기록은 확인할 수 있지만 새 메시지는 보낼 수 없습니다.</span>
+            </div>
+          ) : null}
+
           <div className="message-list">
             {detailQuery.isLoading ? <LoadingState label="대화 내용을 불러오는 중입니다" /> : null}
-            {isClosedBooking ? (
-              <div className="closed-thread-banner">
-                <strong>취소된 예약입니다</strong>
-                <span>대화 기록은 확인할 수 있지만 새 메시지는 보낼 수 없습니다.</span>
-              </div>
-            ) : null}
             {liveMessages.map((item) => (
               <div className={`message ${item.senderType === "operator" || item.senderType === "expert" ? "mine" : ""}`} key={item.id}>
                 <div className="message-bubble">
@@ -370,7 +512,7 @@ export function ChatPage() {
               {uploadMutation.isError ? <span className="form-error">{uploadMutation.error.message}</span> : null}
               <TextInput disabled={isClosedBooking} value={message} onChange={(event) => setMessage(event.target.value)} placeholder={isClosedBooking ? "취소된 예약에는 메시지를 보낼 수 없습니다" : "고객에게 보낼 메시지를 입력하세요"} />
             </div>
-            <Button type="submit" variant="primary" icon={<Send size={16} />} disabled={(!message.trim() && pendingAttachments.length === 0) || !socketBookingId || socketStatus !== "connected" || isClosedBooking || uploadMutation.isPending}>
+            <Button type="submit" variant="primary" icon={<Send size={16} />} disabled={(!message.trim() && pendingAttachments.length === 0) || !socketBookingId || isClosedBooking || uploadMutation.isPending || (pendingAttachments.length > 0 && socketStatus !== "connected")}>
               전송
             </Button>
           </form>
@@ -445,7 +587,67 @@ export function ChatPage() {
       >
         {selectedReport ? <AppReportCard className="report-modal-card" report={selectedReport} /> : null}
       </Modal>
-    </>
+
+      <Modal
+        bodyClassName="chat-call-body"
+        className="chat-call-modal"
+        open={callOpen}
+        title={`${detail?.customer.name ?? "고객"}님과 화상통화`}
+        onClose={() => void closeVideoCall()}
+        footer={
+          <>
+            <Button
+              type="button"
+              variant="secondary"
+              icon={callMuted ? <MicOff size={16} /> : <Mic size={16} />}
+              onClick={toggleCallMuted}
+              disabled={!callControllerRef.current}
+            >
+              {callMuted ? "마이크 켜기" : "마이크 끄기"}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              icon={callVideoEnabled ? <Video size={16} /> : <VideoOff size={16} />}
+              onClick={() => void toggleCallVideo()}
+              disabled={!callControllerRef.current}
+            >
+              {callVideoEnabled ? "카메라 끄기" : "카메라 켜기"}
+            </Button>
+            <Button type="button" variant="danger" icon={<PhoneOff size={16} />} onClick={() => void endVideoCall()}>
+              통화 종료
+            </Button>
+          </>
+        }
+      >
+        <div className="chat-call-stage">
+          <video ref={callRemoteVideoRef} autoPlay playsInline />
+          <div className="chat-call-local">
+            <video ref={callLocalVideoRef} autoPlay muted playsInline />
+            <span>{callVideoEnabled ? "내 화면" : "카메라 꺼짐"}</span>
+          </div>
+          <audio ref={callAudioRef} autoPlay />
+          {joinCallMutation.isPending ? <div className="chat-call-wait">Chime 화상통화 방을 만드는 중…</div> : null}
+        </div>
+        <div className={`chat-call-status ${callError ? "is-error" : ""}`} role="status">
+          <strong>{callError ? "연결 실패" : "통화 상태"}</strong>
+          <span>{callError || callStatus}</span>
+          {callError ? (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                if (!detail?.booking) return;
+                setCallError("");
+                joinCallMutation.mutate(detail.booking.id);
+              }}
+            >
+              다시 연결
+            </Button>
+          ) : null}
+        </div>
+      </Modal>
+    </div>
   );
 }
 
@@ -474,7 +676,7 @@ function getSocketStatusLabel(status: ConsultingSocketStatus) {
   if (status === "connected") return "실시간 연결됨";
   if (status === "connecting") return "연결 중";
   if (status === "reconnecting") return "재연결 중";
-  if (status === "offline") return "연결 대기";
+  if (status === "offline") return "실시간 연결 끊김 · 문자 전송 가능";
   return "대화 대기";
 }
 
@@ -486,6 +688,10 @@ function getDeliveryLabel(message: LiveChatMessage) {
 
 function isClosedBookingStatus(status: BookingStatus) {
   return status === "cancelled" || status === "no_show" || status === "refund_requested";
+}
+
+function canStartVideoCall(status: BookingStatus, channel: string) {
+  return channel === "video" && ["confirmed", "scheduled", "in_progress"].includes(status);
 }
 
 function mapSocketSenderType(
@@ -519,8 +725,12 @@ function mapSocketMessage(
   };
 }
 
-function getMessageKey(message: LiveChatMessage) {
-  return message.clientMessageId ?? message.id;
+function isSameMessage(left: LiveChatMessage, right: LiveChatMessage) {
+  if (left.id === right.id) return true;
+  if (left.clientMessageId && right.clientMessageId) {
+    return left.clientMessageId === right.clientMessageId;
+  }
+  return false;
 }
 
 function mergeHistoryMessages(current: LiveChatMessage[], historyMessages: LiveChatMessage[]) {
@@ -528,15 +738,17 @@ function mergeHistoryMessages(current: LiveChatMessage[], historyMessages: LiveC
     return current;
   }
 
-  const byKey = new Map<string, LiveChatMessage>();
-  for (const message of current) {
-    byKey.set(getMessageKey(message), message);
-  }
+  const merged = [...current];
   for (const message of historyMessages) {
-    byKey.set(getMessageKey(message), message);
+    const existingIndex = merged.findIndex((existing) => isSameMessage(existing, message));
+    if (existingIndex >= 0) {
+      merged[existingIndex] = {...merged[existingIndex], ...message};
+    } else {
+      merged.push(message);
+    }
   }
 
-  return Array.from(byKey.values()).sort((a, b) => a.sentAt.localeCompare(b.sentAt));
+  return merged.sort((a, b) => a.sentAt.localeCompare(b.sentAt));
 }
 
 function lastMessage(thread: { messages: Array<{ body: string }> }) {

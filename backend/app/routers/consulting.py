@@ -96,6 +96,19 @@ async def _broadcast(booking_id: str, event: dict[str, object]) -> None:
     _connections[booking_id].discard(connection)
 
 
+async def broadcast_booking_status(booking_id: str, status: str, message: str) -> None:
+  """Push a customer-readable booking status notice to the active chat."""
+  await _broadcast(
+    booking_id,
+    {
+      "type": "booking.status",
+      "bookingId": booking_id,
+      "status": status,
+      "message": message,
+    },
+  )
+
+
 @router.get("/bookings/{booking_id}/summary")
 async def get_customer_booking_summary(booking_id: str):
   return partner_workspace.get_customer_visible_summary(booking_id)
