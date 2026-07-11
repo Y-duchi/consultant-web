@@ -39,6 +39,7 @@ async def confirm_partner_email_verification(payload: PartnerEmailVerificationCo
   return await real_workspace.confirm_partner_email_verification(payload.email, payload.code)
 
 
+@router.get("/", response_model=list[PartnerApplication], include_in_schema=False)
 @router.get("", response_model=list[PartnerApplication])
 async def list_partner_applications(
   status: Union[PartnerApplicationStatus, str] = Query(default="all"),
@@ -49,6 +50,7 @@ async def list_partner_applications(
   return await real_workspace.list_partner_applications(status=status_value, query=query)
 
 
+@router.post("/", response_model=PartnerApplication, include_in_schema=False)
 @router.post("", response_model=PartnerApplication)
 async def create_partner_application(payload: PartnerApplicationCreate):
   return await real_workspace.create_partner_application(payload)
