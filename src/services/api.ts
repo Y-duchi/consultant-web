@@ -453,8 +453,11 @@ export interface PartnerApplicationInput {
   offlineDetailAddress?: string;
   offlineLocationNote?: string;
   businessRegistrationFileName?: string;
+  businessRegistrationStorageKey?: string;
   beautyLicenseFileName?: string;
+  beautyLicenseStorageKey?: string;
   additionalCertificateFileNames?: string[];
+  additionalCertificateStorageKeys?: string[];
 }
 
 export interface PartnerApplicationDetail {
@@ -485,6 +488,13 @@ export interface PartnerDocumentAccessResult {
   fileName: string;
   accessUrl: string;
   expiresInMinutes: number;
+}
+
+interface PartnerDocumentUploadResult {
+  objectKey: string;
+  uploadUrl: string;
+  method: string;
+  contentType: string;
 }
 
 export interface BookingDetail {
@@ -625,6 +635,29 @@ export async function submitPartnerApplication(input: PartnerApplicationInput): 
   const application = toCamelDeep(raw) as PartnerApplication;
   partnerApplications = upsertById(partnerApplications, [application]);
   return clone(application);
+}
+
+export async function uploadPartnerApplicationDocument(file: File, documentType: PartnerApplicationDocumentType): Promise<string> {
+  const contentType = "application/pdf";
+  const raw = await requestPartnerApplicationJson<unknown>("/documents/presigned-upload", {
+    method: "POST",
+    body: JSON.stringify({
+      document_type: documentType,
+      file_name: file.name,
+      content_type: contentType,
+      size_bytes: file.size,
+    }),
+  });
+  const upload = toCamelDeep(raw) as PartnerDocumentUploadResult;
+  const uploadResponse = await fetch(upload.uploadUrl, {
+    method: upload.method || "PUT",
+    headers: { "Content-Type": upload.contentType || contentType },
+    body: file,
+  });
+  if (!uploadResponse.ok) {
+    throw new Error(`${file.name} 파일 업로드에 실패했습니다.`);
+  }
+  return upload.objectKey;
 }
 
 export async function getPartnerApplications(filters: PartnerApplicationFilters = {}): Promise<PartnerApplication[]> {

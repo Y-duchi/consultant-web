@@ -1,8 +1,8 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, FileCheck2, MapPin, Send, ShieldCheck, Video } from "lucide-react";
-import { submitPartnerApplication } from "../../services/api";
+import { submitPartnerApplication, uploadPartnerApplicationDocument } from "../../services/api";
 import { PartnerApplicationStatusBadge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Field, SelectInput, TextArea, TextInput } from "../../shared/ui/Field";
@@ -32,22 +32,36 @@ export function ApplyPage() {
   const [offlineAddress, setOfflineAddress] = useState("서울 성동구 연무장길 8");
   const [offlineDetailAddress, setOfflineDetailAddress] = useState("3층 AURA 상담룸");
   const [offlineLocationNote, setOfflineLocationNote] = useState("성수역 3번 출구 도보 4분, 건물 뒤편 유료 주차 가능");
-  const [businessRegistrationFileName, setBusinessRegistrationFileName] = useState("");
-  const [beautyLicenseFileName, setBeautyLicenseFileName] = useState("");
-  const [additionalCertificateFileNames, setAdditionalCertificateFileNames] = useState<string[]>([]);
+  const [businessRegistrationFile, setBusinessRegistrationFile] = useState<File | null>(null);
+  const [beautyLicenseFile, setBeautyLicenseFile] = useState<File | null>(null);
+  const [additionalCertificateFiles, setAdditionalCertificateFiles] = useState<File[]>([]);
   const [isSubmitting, setSubmitting] = useState(false);
+  const [submissionError, setSubmissionError] = useState("");
   const [submittedApplication, setSubmittedApplication] = useState<PartnerApplication | null>(null);
   const hasOnlineConsulting = consultingModes.includes("online");
   const hasOfflineConsulting = consultingModes.includes("offline");
 
-  const requiredDocumentsReady = useMemo(() => Boolean(businessRegistrationFileName.trim()), [businessRegistrationFileName]);
+  const businessRegistrationFileName = businessRegistrationFile?.name ?? "";
+  const beautyLicenseFileName = beautyLicenseFile?.name ?? "";
+  const additionalCertificateFileNames = additionalCertificateFiles.map((file) => file.name);
+  const requiredDocumentsReady = Boolean(businessRegistrationFile);
   const canSubmit = requiredDocumentsReady && consultingModes.length > 0 && (!hasOfflineConsulting || offlineAddress.trim().length > 0);
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!canSubmit) return;
+    if (!canSubmit || !businessRegistrationFile) return;
     setSubmitting(true);
+    setSubmissionError("");
     try {
+      const [businessRegistrationStorageKey, beautyLicenseStorageKey, additionalCertificateStorageKeys] = await Promise.all([
+        uploadPartnerApplicationDocument(businessRegistrationFile, "business_registration"),
+        beautyLicenseFile
+          ? uploadPartnerApplicationDocument(beautyLicenseFile, "beauty_license")
+          : Promise.resolve(undefined),
+        Promise.all(
+          additionalCertificateFiles.map((file) => uploadPartnerApplicationDocument(file, "additional_certificate")),
+        ),
+      ]);
       const application = await submitPartnerApplication({
         partnerType,
         businessName,
@@ -69,21 +83,26 @@ export function ApplyPage() {
         offlineDetailAddress: hasOfflineConsulting ? offlineDetailAddress : undefined,
         offlineLocationNote: hasOfflineConsulting ? offlineLocationNote : undefined,
         businessRegistrationFileName,
+        businessRegistrationStorageKey,
         beautyLicenseFileName,
+        beautyLicenseStorageKey,
         additionalCertificateFileNames,
+        additionalCertificateStorageKeys,
       });
       setSubmittedApplication(application);
+    } catch (error) {
+      setSubmissionError(error instanceof Error ? error.message : "입점 신청 제출에 실패했습니다.");
     } finally {
       setSubmitting(false);
     }
   };
 
-  const updateFileName = (setter: (value: string) => void) => (event: ChangeEvent<HTMLInputElement>) => {
-    setter(event.target.files?.[0]?.name ?? "");
+  const updateFile = (setter: (value: File | null) => void) => (event: ChangeEvent<HTMLInputElement>) => {
+    setter(event.target.files?.[0] ?? null);
   };
 
-  const updateAdditionalFileNames = (event: ChangeEvent<HTMLInputElement>) => {
-    setAdditionalCertificateFileNames(Array.from(event.target.files ?? []).map((file) => file.name));
+  const updateAdditionalFiles = (event: ChangeEvent<HTMLInputElement>) => {
+    setAdditionalCertificateFiles(Array.from(event.target.files ?? []));
   };
 
   const toggleConsultingMode = (mode: ConsultingMode) => {
@@ -249,21 +268,22 @@ export function ApplyPage() {
 
           <div className="document-upload-grid">
             <Field label="사업자등록증 PDF" hint="필수 서류">
-              <input className="control" type="file" accept="application/pdf" required onChange={updateFileName(setBusinessRegistrationFileName)} />
+              <input className="control" type="file" accept="application/pdf" required onChange={updateFile(setBusinessRegistrationFile)} />
               <small>{businessRegistrationFileName || "PDF 파일을 선택하세요"}</small>
             </Field>
             <Field label="국가 미용사 면허증 PDF" hint="선택 서류">
-              <input className="control" type="file" accept="application/pdf" onChange={updateFileName(setBeautyLicenseFileName)} />
+              <input className="control" type="file" accept="application/pdf" onChange={updateFile(setBeautyLicenseFile)} />
               <small>{beautyLicenseFileName || "제출하지 않아도 됩니다"}</small>
             </Field>
             <Field label="추가 자격증 PDF" hint="선택 서류 · 여러 파일 선택 가능">
-              <input className="control" type="file" accept="application/pdf" multiple onChange={updateAdditionalFileNames} />
+              <input className="control" type="file" accept="application/pdf" multiple onChange={updateAdditionalFiles} />
               <small>{additionalCertificateFileNames.length ? additionalCertificateFileNames.join(", ") : "제출하지 않아도 됩니다"}</small>
             </Field>
           </div>
 
+          {submissionError ? <div className="form-error">{submissionError}</div> : null}
           <Button type="submit" variant="primary" icon={<Send size={17} />} disabled={isSubmitting || !canSubmit}>
-            {isSubmitting ? "제출 중" : "입점 신청 제출"}
+            {isSubmitting ? "파일 업로드 및 제출 중" : "입점 신청 제출"}
           </Button>
         </form>
       </section>

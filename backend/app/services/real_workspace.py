@@ -14,6 +14,7 @@ import asyncpg
 from fastapi import HTTPException
 
 from app.services.auth import PartnerPrincipal, validate_partner_principal
+from app.services.s3 import create_presigned_download
 from app.settings import get_settings
 
 
@@ -182,8 +183,11 @@ async def _ensure_partner_onboarding_schema(conn: asyncpg.Connection) -> None:
     "add column if not exists offline_detail_address text",
     "add column if not exists offline_location_note text",
     "add column if not exists business_registration_file_name text",
+    "add column if not exists business_registration_storage_key text",
     "add column if not exists beauty_license_file_name text",
+    "add column if not exists beauty_license_storage_key text",
     "add column if not exists additional_certificate_file_names text[] not null default '{}'",
+    "add column if not exists additional_certificate_storage_keys text[] not null default '{}'",
     "add column if not exists review_memo text",
     "add column if not exists reviewer_name text",
     "add column if not exists generated_account_id uuid",
@@ -844,7 +848,9 @@ async def create_partner_application(payload: Any) -> dict[str, Any]:
         online_price_30_min, online_price_60_min, offline_price_30_min,
         offline_price_60_min, offline_address, offline_detail_address,
         offline_location_note, business_registration_file_name,
-        beauty_license_file_name, additional_certificate_file_names
+        business_registration_storage_key, beauty_license_file_name,
+        beauty_license_storage_key, additional_certificate_file_names,
+        additional_certificate_storage_keys
       )
       select $1, $2, $3, $4, $5, $6, $7,
         $8, $9::text[], $10::text[], $11::text[],
@@ -852,7 +858,9 @@ async def create_partner_application(payload: Any) -> dict[str, Any]:
         $16, $17, $18,
         $19, $20, $21,
         $22, $23,
-        $24, $25::text[]
+        $24, $25,
+        $26, $27::text[],
+        $28::text[]
       where not exists (
         select 1 from consulting_partner_accounts where email = $1
       )
@@ -880,8 +888,11 @@ async def create_partner_application(payload: Any) -> dict[str, Any]:
         offline_detail_address = excluded.offline_detail_address,
         offline_location_note = excluded.offline_location_note,
         business_registration_file_name = excluded.business_registration_file_name,
+        business_registration_storage_key = excluded.business_registration_storage_key,
         beauty_license_file_name = excluded.beauty_license_file_name,
+        beauty_license_storage_key = excluded.beauty_license_storage_key,
         additional_certificate_file_names = excluded.additional_certificate_file_names,
+        additional_certificate_storage_keys = excluded.additional_certificate_storage_keys,
         status = 'submitted',
         rejection_reason = null,
         review_memo = null,
@@ -911,8 +922,11 @@ async def create_partner_application(payload: Any) -> dict[str, Any]:
       (payload.offline_detail_address or "").strip() or None,
       (payload.offline_location_note or "").strip() or None,
       (payload.business_registration_file_name or "").strip() or None,
+      (payload.business_registration_storage_key or "").strip() or None,
       (payload.beauty_license_file_name or "").strip() or None,
-      _clean_text_list(payload.additional_certificate_file_names),
+      (payload.beauty_license_storage_key or "").strip() or None,
+      [str(value).strip() for value in payload.additional_certificate_file_names],
+      [str(value).strip() for value in payload.additional_certificate_storage_keys],
     )
     if row is None:
       raise HTTPException(status_code=409, detail="이미 파트너 계정이 발급된 이메일입니다.")
@@ -2346,14 +2360,27 @@ def _application_from_row(row: asyncpg.Record) -> dict[str, Any]:
   submitted_at = row.get("created_at") or row.get("submitted_at")
   documents = []
   document_specs = [
-    ("business_registration", row.get("business_registration_file_name")),
-    ("beauty_license", row.get("beauty_license_file_name")),
+    (
+      "business_registration",
+      row.get("business_registration_file_name"),
+      row.get("business_registration_storage_key"),
+    ),
+    (
+      "beauty_license",
+      row.get("beauty_license_file_name"),
+      row.get("beauty_license_storage_key"),
+    ),
   ]
+  additional_storage_keys = _list(row.get("additional_certificate_storage_keys"))
   document_specs.extend(
-    ("additional_certificate", file_name)
-    for file_name in _list(row.get("additional_certificate_file_names"))
+    (
+      "additional_certificate",
+      file_name,
+      additional_storage_keys[index] if index < len(additional_storage_keys) else None,
+    )
+    for index, file_name in enumerate(_list(row.get("additional_certificate_file_names")))
   )
-  for index, (document_type, file_name) in enumerate(document_specs):
+  for index, (document_type, file_name, storage_key) in enumerate(document_specs):
     if not file_name:
       continue
     documents.append({
@@ -2363,7 +2390,7 @@ def _application_from_row(row: asyncpg.Record) -> dict[str, Any]:
       "file_name": str(file_name),
       "mime_type": "application/pdf",
       "size_label": "제출됨",
-      "storage_key": "",
+      "storage_key": str(storage_key or ""),
       "uploaded_at": _iso(submitted_at),
       "review_status": "verified" if row.get("status") == "approved" else "pending",
     })
@@ -2398,3 +2425,37 @@ def _application_from_row(row: asyncpg.Record) -> dict[str, Any]:
     "generated_account_id": str(row["generated_account_id"]) if row.get("generated_account_id") else None,
     "documents": documents,
   }
+
+
+async def create_partner_application_document_access(document_id: str) -> dict[str, Any]:
+  application_id, separator, _ = document_id.partition(":")
+  if not separator:
+    raise HTTPException(status_code=404, detail="제출 서류를 찾을 수 없습니다.")
+  conn = await _connect()
+  try:
+    await _ensure_partner_onboarding_schema(conn)
+    row = await conn.fetchrow(
+      "select * from consulting_partner_applications where id::text = $1",
+      application_id,
+    )
+    if row is None:
+      raise HTTPException(status_code=404, detail="제출 서류를 찾을 수 없습니다.")
+    document = next(
+      (item for item in _application_from_row(row)["documents"] if item["id"] == document_id),
+      None,
+    )
+    if document is None:
+      raise HTTPException(status_code=404, detail="제출 서류를 찾을 수 없습니다.")
+    if not document["storage_key"]:
+      raise HTTPException(status_code=409, detail="이 신청에는 실제 PDF 파일이 업로드되지 않았습니다.")
+    settings = get_settings()
+    if not settings.s3_configured:
+      raise HTTPException(status_code=503, detail="S3_BUCKET_NAME is not configured.")
+    access = create_presigned_download(settings, document["storage_key"], document["file_name"])
+    return {
+      "document_id": document["id"],
+      "file_name": document["file_name"],
+      **access,
+    }
+  finally:
+    await conn.close()

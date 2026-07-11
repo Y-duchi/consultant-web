@@ -1,4 +1,5 @@
 from pathlib import PurePosixPath
+from urllib.parse import quote
 from uuid import uuid4
 
 import boto3
@@ -64,4 +65,21 @@ def create_presigned_upload(settings: Settings, folder: str, filename: str, cont
     "method": "PUT",
     "expiresIn": 900,
     "contentType": content_type,
+  }
+
+
+def create_presigned_download(settings: Settings, object_key: str, filename: str, expires_in: int = 600):
+  access_url = create_s3_client(settings).generate_presigned_url(
+    "get_object",
+    Params={
+      "Bucket": settings.s3_bucket_name,
+      "Key": object_key,
+      "ResponseContentType": "application/pdf",
+      "ResponseContentDisposition": f"inline; filename*=UTF-8''{quote(filename)}",
+    },
+    ExpiresIn=expires_in,
+  )
+  return {
+    "access_url": access_url,
+    "expires_in_minutes": max(1, expires_in // 60),
   }

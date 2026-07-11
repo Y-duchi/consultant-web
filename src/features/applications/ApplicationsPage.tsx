@@ -46,6 +46,7 @@ export function ApplicationsPage() {
   const [generatedAccount, setGeneratedAccount] = useState<PartnerAccount | null>(null);
   const [generatedMember, setGeneratedMember] = useState<PartnerBusinessMember | null>(null);
   const [documentAccess, setDocumentAccess] = useState<PartnerDocumentAccessResult | null>(null);
+  const [documentAccessError, setDocumentAccessError] = useState("");
   const [credentialsCopied, setCredentialsCopied] = useState(false);
 
   const applicationsQuery = useQuery({
@@ -63,7 +64,6 @@ export function ApplicationsPage() {
   const visibleAccount = generatedAccount ?? detailQuery.data?.account ?? null;
   const visibleMember = generatedMember ?? detailQuery.data?.member ?? null;
   const isFinalDecision = selectedApplication?.status === "approved" || selectedApplication?.status === "rejected";
-  const hasReviewMemo = reviewMemo.trim().length > 0;
 
   useEffect(() => {
     setReviewMemo(selectedApplication?.reviewMemo ?? "");
@@ -73,6 +73,7 @@ export function ApplicationsPage() {
     setGeneratedAccount(null);
     setGeneratedMember(null);
     setDocumentAccess(null);
+    setDocumentAccessError("");
     setCredentialsCopied(false);
   }, [selectedId]);
 
@@ -84,7 +85,11 @@ export function ApplicationsPage() {
   const decisionMutation = useMutation({
     mutationFn: ({ nextStatus }: { nextStatus: Exclude<PartnerApplicationStatus, "approved"> }) =>
       updatePartnerApplicationStatus(selectedId!, nextStatus, {
-        reviewMemo: reviewMemo || "관리자 검토 결과가 반영되었습니다.",
+        reviewMemo:
+          reviewMemo ||
+          (nextStatus === "needs_update"
+            ? "신청 정보 또는 제출 서류 보완을 요청했습니다."
+            : "관리자 검토 결과 반려되었습니다."),
         reviewerName: "플랫폼 관리자",
       }),
     onSuccess: refreshApplications,
@@ -143,7 +148,21 @@ export function ApplicationsPage() {
   );
 
   const openDocument = async (documentId: string) => {
-    setDocumentAccess(await preparePartnerApplicationDocumentAccess(documentId));
+    const previewWindow = window.open("about:blank", "_blank");
+    if (previewWindow) previewWindow.opener = null;
+    setDocumentAccessError("");
+    try {
+      const access = await preparePartnerApplicationDocumentAccess(documentId);
+      setDocumentAccess(access);
+      if (previewWindow) {
+        previewWindow.location.href = access.accessUrl;
+      } else {
+        window.open(access.accessUrl, "_blank", "noopener,noreferrer");
+      }
+    } catch (error) {
+      previewWindow?.close();
+      setDocumentAccessError(error instanceof Error ? error.message : "문서를 열지 못했습니다.");
+    }
   };
 
   if (applicationsQuery.isLoading) return <LoadingState label="입점 신청 목록을 불러오는 중입니다" />;
@@ -286,7 +305,7 @@ export function ApplicationsPage() {
               <Button
                 variant="secondary"
                 icon={<FileText size={16} />}
-                disabled={isFinalDecision || !hasReviewMemo || decisionMutation.isPending}
+                disabled={isFinalDecision || decisionMutation.isPending}
                 onClick={() => decisionMutation.mutate({ nextStatus: "needs_update" })}
               >
                 보완 요청
@@ -371,9 +390,13 @@ export function ApplicationsPage() {
                       <div className="row-actions">
                         <Badge tone={item.required ? "info" : "neutral"}>{item.required ? "필수" : "선택"}</Badge>
                         <PartnerApplicationDocumentReviewBadge status={item.document.reviewStatus} />
-                        <Button variant="secondary" icon={<Eye size={15} />} onClick={() => openDocument(item.document!.id)}>
-                          열람
-                        </Button>
+                        {item.document.storageKey ? (
+                          <Button variant="secondary" icon={<Eye size={15} />} onClick={() => openDocument(item.document!.id)}>
+                            열람
+                          </Button>
+                        ) : (
+                          <Badge tone="warning">파일 없음</Badge>
+                        )}
                       </div>
                       {item.document.note ? <p>{item.document.note}</p> : null}
                     </div>
@@ -399,10 +422,11 @@ export function ApplicationsPage() {
                   <FileText size={18} />
                   <div>
                     <strong>{documentAccess.fileName}</strong>
-                    <span>{documentAccess.expiresInMinutes}분짜리 문서 접근 URL이 준비되었습니다.</span>
+                    <span>새 창에서 열었습니다. 접근 URL은 {documentAccess.expiresInMinutes}분 동안 유효합니다.</span>
                   </div>
                 </div>
               ) : null}
+              {documentAccessError ? <div className="form-error">{documentAccessError}</div> : null}
             </section>
 
             <section className="detail-section">
