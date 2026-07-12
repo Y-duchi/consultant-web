@@ -17,7 +17,7 @@ import {
   translateBookingCallCaption,
   updateAvailability,
 } from "../../services/api";
-import type { BookingSaveChangesInput } from "../../services/api";
+import type { BookingDetail, BookingSaveChangesInput } from "../../services/api";
 import { useAuth } from "../auth/AuthContext";
 import { BookingStatusBadge, PaymentStatusBadge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
@@ -152,6 +152,12 @@ export function BookingsPage() {
   const saveChangesMutation = useMutation({
     mutationFn: ({ bookingId, changes }: { bookingId: string; changes: BookingSaveChangesInput }) => saveBookingChanges(bookingId, changes, user ?? undefined),
     onSuccess: (booking) => {
+      queryClient.setQueriesData<Booking[]>({ queryKey: ["bookings"] }, (current) =>
+        current?.map((item) => item.id === booking.id ? booking : item),
+      );
+      queryClient.setQueriesData<BookingDetail>({ queryKey: ["booking-detail", booking.id] }, (current) =>
+        current ? { ...current, booking } : current,
+      );
       setEditDraft(makeEditDraft(booking));
       setPendingStatus(null);
       setPendingPaymentPaid(false);
