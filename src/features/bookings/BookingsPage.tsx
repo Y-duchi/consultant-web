@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarRange, CheckCircle2, Clock3, MessageSquareText, Mic, MicOff, Save, Search, Video, VideoOff, XCircle } from "lucide-react";
@@ -31,7 +31,7 @@ import { bookingStatusOptions } from "../../shared/utils/options";
 import { addDays, bookingStatusLabel, formatCurrency, formatDate, formatDateTime, formatTime, toInputDate } from "../../shared/utils/format";
 import type { AvailabilitySlot, Booking, BookingStatus, ConsultingCaptionTranslation, ConsultingCallJoinResult, ConsultingCallLanguageCode, ConsultingCallState, ManagerSettings, OperatingHours } from "../../types/domain";
 import { AppReportCard } from "../reports/AppReportCard";
-import { startWebChimeMeeting, type WebChimeMeetingController, type WebChimeTranscriptResult } from "../../services/chimeMeetingClient";
+import type { WebChimeMeetingController, WebChimeTranscriptResult } from "../../services/chimeMeetingClient";
 import { connectConsultingConversationSocket, type ConsultingConversationSocketClient, type ConsultingParticipantType, type ConsultingServerSocketEvent } from "../../services/consultingRealtime";
 
 type CalendarView = "month" | "week" | "day";
@@ -79,6 +79,7 @@ export function BookingsPage() {
   const [view, setView] = useState<CalendarView>("week");
   const [anchorDate, setAnchorDate] = useState(() => new Date());
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
   const [status, setStatus] = useState<BookingStatus | "all">("all");
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
@@ -120,8 +121,8 @@ export function BookingsPage() {
   const requestedBookingId = searchParams.get("bookingId")?.trim() ?? "";
 
   const bookingsQuery = useQuery({
-    queryKey: ["bookings", query, status, user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
-    queryFn: () => getBookings({ query, status, sort: "startsAtAsc" }, user ?? undefined),
+    queryKey: ["bookings", deferredQuery, status, user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
+    queryFn: () => getBookings({ query: deferredQuery, status, sort: "startsAtAsc" }, user ?? undefined),
   });
   const expertsQuery = useQuery({
     queryKey: ["experts", user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
@@ -345,12 +346,15 @@ export function BookingsPage() {
       return;
     }
 
+    const audioElement = callAudioRef.current;
+    const localVideoElement = callLocalVideoRef.current;
+    const remoteVideoElement = callRemoteVideoRef.current;
     const startGeneration = ++chimeStartGenerationRef.current;
     chimeStartInFlightRef.current = true;
-    void startWebChimeMeeting(callJoinResult, {
-      audioElement: callAudioRef.current,
-      localVideoElement: callLocalVideoRef.current,
-      remoteVideoElement: callRemoteVideoRef.current,
+    void import("../../services/chimeMeetingClient").then(({ startWebChimeMeeting }) => startWebChimeMeeting(callJoinResult, {
+      audioElement,
+      localVideoElement,
+      remoteVideoElement,
       onStatusChange: (message: string) => {
         setCallConnectionStatus(message);
         setCallFeedback(message);
@@ -361,7 +365,7 @@ export function BookingsPage() {
           setCallFeedback(status.message || "Chime 실시간 자막이 실패했습니다.");
         }
       },
-    }).then((controller) => {
+    })).then((controller) => {
       if (startGeneration !== chimeStartGenerationRef.current) {
         void controller.stop();
         return;

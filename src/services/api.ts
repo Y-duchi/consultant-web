@@ -796,10 +796,7 @@ export async function getAdminBookings(filters: BookingFilters = {}): Promise<Bo
 
 export async function getDashboardSummary(user?: AuthUser): Promise<DashboardSummary> {
   if (shouldUsePartnerApi(user)) {
-    const [data] = await Promise.all([
-      requestPartnerJson<{ summary: DashboardSummary }>("/dashboard"),
-      rememberPartnerWorkspaceLookups(),
-    ]);
+    const data = await requestPartnerJson<{ summary: DashboardSummary }>("/dashboard");
     rememberBookings(data.summary.todayTimeline);
     return clone(data.summary);
   }
@@ -905,10 +902,7 @@ export async function getDashboardSummary(user?: AuthUser): Promise<DashboardSum
 
 export async function getBookings(filters: BookingFilters = {}, user?: AuthUser): Promise<Booking[]> {
   if (shouldUsePartnerApi(user)) {
-    const [data] = await Promise.all([
-      requestPartnerJson<{ bookings: Booking[] }>(buildPartnerPath("/bookings", filters)),
-      rememberPartnerWorkspaceLookups(),
-    ]);
+    const data = await requestPartnerJson<{ bookings: Booking[] }>(buildPartnerPath("/bookings", filters));
     rememberBookings(data.bookings);
     return clone(data.bookings);
   }
