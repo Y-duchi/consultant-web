@@ -2152,37 +2152,55 @@ async def get_partner_customer(customer_id: str, principal: PartnerPrincipal) ->
 
 async def list_partner_chats(principal: PartnerPrincipal) -> list[dict[str, Any]]:
   bookings = await list_partner_bookings(principal)
-  return [await _thread_from_booking(booking) for booking in bookings]
+  latest_by_conversation: dict[tuple[str, str], dict[str, Any]] = {}
+  for booking in bookings:
+    latest_by_conversation.setdefault((booking["customer_id"], booking["expert_id"]), booking)
+  return [await _thread_from_booking(booking) for booking in latest_by_conversation.values()]
+
+
+async def _conversation_bookings(booking: dict[str, Any], principal: PartnerPrincipal) -> list[dict[str, Any]]:
+  customer_bookings = await list_partner_bookings(principal, {"customerId": booking["customer_id"]})
+  return [item for item in customer_bookings if item["expert_id"] == booking["expert_id"]]
 
 
 async def get_chat_thread_detail(thread_id: str, principal: PartnerPrincipal) -> dict[str, Any]:
   booking_id = thread_id.removeprefix("thread-")
   booking = await get_partner_booking(booking_id, principal)
+  conversation_bookings = await _conversation_bookings(booking, principal)
+  conversation_booking_ids = [item["id"] for item in conversation_bookings]
+  messages_by_booking = await list_chat_messages_for_bookings(conversation_booking_ids)
+  messages = sorted(
+    [message for item in conversation_bookings for message in messages_by_booking.get(item["id"], [])],
+    key=lambda message: message["sent_at"],
+  )
+  for message in messages:
+    message["thread_id"] = thread_id
   customer_detail = await get_partner_customer(booking["customer_id"], principal)
   expert = await get_expert(booking["expert_id"])
   reports = await list_shared_reports(principal, booking["customer_id"])
   return {
-    "thread": await _thread_from_booking(booking),
+    "thread": await _thread_from_booking(booking, conversation_booking_ids),
     "customer": customer_detail["customer"],
     "booking": booking,
     "expert": expert,
     "shared_reports": reports,
-    "messages": await list_chat_messages(booking["id"]),
+    "messages": messages,
   }
 
 
 async def mark_chat_thread_read(thread_id: str, principal: PartnerPrincipal) -> dict[str, Any]:
   booking_id = thread_id.removeprefix("thread-")
   booking = await get_partner_booking(booking_id, principal)
+  conversation_booking_ids = [item["id"] for item in await _conversation_bookings(booking, principal)]
   conn = await _connect()
   try:
     await conn.execute(
       """
       update consulting_bookings
       set expert_read_at = now(), updated_at = now()
-      where id::text = $1 and expert_id = $2
+      where id::text = any($1::text[]) and expert_id = $2
       """,
-      booking_id,
+      conversation_booking_ids,
       principal.expert_id,
     )
   finally:
@@ -2190,7 +2208,55 @@ async def mark_chat_thread_read(thread_id: str, principal: PartnerPrincipal) -> 
   return await get_chat_thread_detail(thread_id, principal)
 
 
-async def _thread_from_booking(booking: dict[str, Any]) -> dict[str, Any]:
+async def send_chat_message(
+  thread_id: str,
+  body: str,
+  client_message_id: str,
+  principal: PartnerPrincipal,
+) -> dict[str, Any]:
+  booking_id = thread_id.removeprefix("thread-")
+  booking = await get_partner_booking(booking_id, principal)
+  clean_body = body.strip()
+  if not clean_body:
+    raise HTTPException(status_code=422, detail="메시지 내용을 입력해 주세요.")
+  if len(clean_body) > 1000:
+    raise HTTPException(status_code=422, detail="메시지는 1,000자 이내로 입력해 주세요.")
+
+  expert = await get_expert(booking["expert_id"])
+  conn = await _connect()
+  try:
+    row = await conn.fetchrow(
+      """
+      insert into consulting_messages (
+        booking_id, client_message_id, sender_type, sender_name, body
+      )
+      values ($1::uuid, $2, 'expert', $3, $4)
+      on conflict (booking_id, sender_type, client_message_id)
+      do update set client_message_id = consulting_messages.client_message_id
+      returning id::text id, booking_id::text booking_id, client_message_id,
+                sender_type, sender_name, body, created_at
+      """,
+      booking_id,
+      client_message_id,
+      expert["name"],
+      clean_body,
+    )
+  finally:
+    await conn.close()
+
+  return {
+    "id": row["id"],
+    "booking_id": row["booking_id"],
+    "client_message_id": row["client_message_id"],
+    "sender_type": row["sender_type"],
+    "sender_name": row["sender_name"],
+    "body": row["body"],
+    "sent_at": _iso(row["created_at"]),
+  }
+
+
+async def _thread_from_booking(booking: dict[str, Any], booking_ids: list[str] | None = None) -> dict[str, Any]:
+  conversation_booking_ids = booking_ids or [booking["id"]]
   conn = await _connect()
   try:
     last_message_at, unread_count = await conn.fetchrow(
@@ -2202,15 +2268,15 @@ async def _thread_from_booking(booking: dict[str, Any]) -> dict[str, Any]:
             and ($2::timestamptz is null or m.created_at > $2::timestamptz)
         )::int as unread_count
       from consulting_messages m
-      where m.booking_id::text = $1 and m.deleted_at is null
+      where m.booking_id::text = any($1::text[]) and m.deleted_at is null
       """,
-      booking["id"],
+      conversation_booking_ids,
       _parse_iso_datetime(booking["expert_read_at"]) if booking.get("expert_read_at") else None,
     )
   finally:
     await conn.close()
   status = "waiting" if booking["status"] in {"requested", "contacting"} else "open"
-  if booking["status"] in {"completed", "cancelled", "no_show"}:
+  if booking["status"] in {"cancelled", "no_show", "refund_requested"}:
     status = "closed"
   return {
     "id": f"thread-{booking['id']}",

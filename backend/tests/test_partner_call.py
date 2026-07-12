@@ -140,7 +140,10 @@ class PartnerCallTests(unittest.IsolatedAsyncioTestCase):
     self.original_chime = partner_call.ChimeMeetingsService
     self.original_get_partner_booking = real_workspace.get_partner_booking
     self.original_connect = real_workspace._connect
+    self.original_generate_summary = real_workspace.generate_summary
+    self.original_get_summary_for_booking = real_workspace.get_summary_for_booking
     self.state: dict[str, Any] = {}
+    self.summary_payloads: list[dict[str, Any]] = []
     self.booking = make_booking()
     self.principal = PartnerPrincipal(
       account_id="partner-1",
@@ -157,14 +160,31 @@ class PartnerCallTests(unittest.IsolatedAsyncioTestCase):
     async def fake_connect() -> FakeConnection:
       return FakeConnection(self.state)
 
+    async def fake_generate_summary(
+      booking_id: str,
+      payload: dict[str, Any],
+      principal: PartnerPrincipal,
+    ) -> dict[str, Any]:
+      self.assertEqual(booking_id, self.booking["id"])
+      self.assertEqual(principal, self.principal)
+      self.summary_payloads.append(payload)
+      return {"job": {"status": "succeeded"}, "summary": {"booking_id": booking_id}}
+
+    async def fake_get_summary_for_booking(booking_id: str, principal: PartnerPrincipal) -> None:
+      return None
+
     partner_call.ChimeMeetingsService = FakeChimeMeetingsService
     real_workspace.get_partner_booking = fake_get_partner_booking
     real_workspace._connect = fake_connect
+    real_workspace.generate_summary = fake_generate_summary
+    real_workspace.get_summary_for_booking = fake_get_summary_for_booking
 
   def tearDown(self) -> None:
     partner_call.ChimeMeetingsService = self.original_chime
     real_workspace.get_partner_booking = self.original_get_partner_booking
     real_workspace._connect = self.original_connect
+    real_workspace.generate_summary = self.original_generate_summary
+    real_workspace.get_summary_for_booking = self.original_get_summary_for_booking
 
   async def test_scheduled_booking_can_join_chime_call(self) -> None:
     result = await partner_call.join_call(
@@ -225,9 +245,16 @@ class PartnerCallTests(unittest.IsolatedAsyncioTestCase):
       "expert_language_code": "ko-KR",
     }
 
-    result = await partner_call.end_call(self.booking["id"], self.principal, Settings(chime_enabled=True))
+    result = await partner_call.end_call(
+      self.booking["id"],
+      self.principal,
+      Settings(chime_enabled=True),
+      transcript="고객에게 로즈 톤을 추천했습니다.",
+    )
 
     self.assertEqual(result["status"], "ended")
+    self.assertEqual(result["summary_status"], "succeeded")
+    self.assertEqual(self.summary_payloads[0]["transcript"], "고객에게 로즈 톤을 추천했습니다.")
 
   async def test_start_transcription_requires_explicit_consent(self) -> None:
     with self.assertRaises(ValueError) as context:

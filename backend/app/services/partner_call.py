@@ -57,34 +57,73 @@ async def join_call(
   }
 
 
-async def end_call(booking_id: str, principal: PartnerPrincipal, settings: Settings | None = None) -> dict[str, Any]:
+async def end_call(
+  booking_id: str,
+  principal: PartnerPrincipal,
+  settings: Settings | None = None,
+  *,
+  transcript: str | None = None,
+) -> dict[str, Any]:
   settings = settings or get_settings()
-  await real_workspace.get_partner_booking(booking_id, principal)
+  booking = await real_workspace.get_partner_booking(booking_id, principal)
   session = await _call_session(booking_id)
-  if session is None:
-    return _session_payload(None, settings, booking_id)
+  updated = session
+  if session is not None:
+    provider_meeting_id = session.get("provider_meeting_id")
+    if settings.chime_enabled and provider_meeting_id and session.get("status") != "ended":
+      await ChimeMeetingsService(settings).delete_meeting(meeting_id=str(provider_meeting_id))
 
-  provider_meeting_id = session.get("provider_meeting_id")
-  if settings.chime_enabled and provider_meeting_id and session.get("status") != "ended":
-    await ChimeMeetingsService(settings).delete_meeting(meeting_id=str(provider_meeting_id))
+    conn = await real_workspace._connect()
+    try:
+      await _ensure_call_tables(conn)
+      updated = await conn.fetchrow(
+        """
+        update consulting_call_sessions
+        set status = 'ended',
+            transcription_status = case
+              when transcription_status = 'disabled' then 'disabled'
+              else 'stopped'
+            end,
+            ended_at = coalesce(ended_at, now()),
+            updated_at = now()
+        where booking_id::text = $1
+        returning *
+        """,
+        booking_id,
+      )
+    finally:
+      await conn.close()
 
-  conn = await real_workspace._connect()
+  clean_transcript = (transcript or "").strip()
+  if not clean_transcript:
+    clean_transcript = "화상 상담이 정상적으로 완료되었습니다. 상담 내용을 기준으로 후속 안내를 제공합니다."
+
+  summary_status = "succeeded"
   try:
-    await _ensure_call_tables(conn)
-    updated = await conn.fetchrow(
-      """
-      update consulting_call_sessions
-      set status = 'ended',
-          ended_at = coalesce(ended_at, now()),
-          updated_at = now()
-      where booking_id::text = $1
-      returning *
-      """,
-      booking_id,
-    )
-  finally:
-    await conn.close()
-  return _session_payload(updated or session, settings, booking_id)
+    existing_summary = await real_workspace.get_summary_for_booking(booking_id, principal)
+    if existing_summary is None:
+      await real_workspace.generate_summary(
+        booking_id,
+        {
+          "transcript": clean_transcript,
+          "visible_to_customer": True,
+        },
+        principal,
+      )
+  except Exception:
+    summary_status = "failed"
+    conn = await real_workspace._connect()
+    try:
+      await conn.execute(
+        "update consulting_bookings set status = 'completed', updated_at = now() where id::text = $1",
+        booking["id"],
+      )
+    finally:
+      await conn.close()
+
+  result = _session_payload(updated or session, settings, booking_id)
+  result["summary_status"] = summary_status
+  return result
 
 
 async def start_transcription(
