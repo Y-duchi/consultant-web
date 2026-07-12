@@ -29,7 +29,7 @@ import {
 } from "../../services/partnerEvents";
 import { Button } from "../../shared/ui/Button";
 import { formatTime, workspaceScopeLabel } from "../../shared/utils/format";
-import type { BookingStatus, ChatMessage } from "../../types/domain";
+import type { Booking, BookingStatus, ChatMessage } from "../../types/domain";
 
 const navItems = [
   { to: "/workspace", label: "내 대시보드", icon: LayoutDashboard, end: true },
@@ -234,24 +234,34 @@ export function PartnerLayout() {
   useEffect(() => {
     if (!bookingNotificationsQuery.isSuccess || !user) return;
     const storageKey = `aura:partner-booking-notifications:${user.id}`;
+    const readStorageKey = `aura:partner-read-notifications:${user.id}`;
     if (seenBookingNotificationAccountIdRef.current !== user.id || !seenBookingNotificationIdsRef.current) {
       seenBookingNotificationAccountIdRef.current = user.id;
       seenBookingNotificationIdsRef.current = loadStoredIds(storageKey);
     }
+    if (readNotificationAccountIdRef.current !== user.id || !readNotificationIdsRef.current) {
+      readNotificationAccountIdRef.current = user.id;
+      readNotificationIdsRef.current = loadStoredIds(readStorageKey);
+    }
     const seenIds = seenBookingNotificationIdsRef.current ?? new Set<string>();
+    const readIds = readNotificationIdsRef.current ?? new Set<string>();
     seenBookingNotificationIdsRef.current = seenIds;
+    readNotificationIdsRef.current = readIds;
+
+    const bookingNotifications = (bookingNotificationsQuery.data ?? [])
+      .filter((booking) => isNewBookingNotificationStatus(booking.status))
+      .map((booking) => makeBookingNotification(booking, readIds));
+    setNotifications((current) =>
+      [...bookingNotifications, ...current.filter((notification) => notification.kind !== "booking")]
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 30),
+    );
 
     for (const booking of [...(bookingNotificationsQuery.data ?? [])].reverse()) {
       if (!isNewBookingNotificationStatus(booking.status) || seenIds.has(booking.id)) continue;
       seenIds.add(booking.id);
-      pushNotification({
-        id: `booking-created:${booking.id}`,
-        bookingId: booking.id,
-        createdAt: booking.requestedAt,
-        description: `${booking.type} · ${formatTime(booking.startsAt)}`,
-        kind: "booking",
-        title: `${booking.customerName || "고객"} 고객의 새 예약 신청`,
-      });
+      const notification = makeBookingNotification(booking, readIds);
+      pushNotification(notification);
       invalidateBookingQueries(queryClient);
     }
     persistStoredIds(storageKey, seenIds);
@@ -459,6 +469,19 @@ function isClosedBookingStatus(status: BookingStatus) {
 
 function isNewBookingNotificationStatus(status: BookingStatus) {
   return status === "requested" || status === "contacting";
+}
+
+function makeBookingNotification(booking: Booking, readIds: Set<string>): PartnerNotification {
+  const id = `booking-created:${booking.id}`;
+  return {
+    id,
+    bookingId: booking.id,
+    createdAt: booking.requestedAt,
+    description: `${booking.type} · ${formatTime(booking.startsAt)}`,
+    kind: "booking",
+    read: readIds.has(id),
+    title: `${booking.customerName || "고객"} 고객의 새 예약 신청`,
+  };
 }
 
 function loadStoredIds(storageKey: string): Set<string> {

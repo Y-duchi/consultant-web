@@ -1,12 +1,27 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 from app.routers import partner_compat
+from app.services import real_workspace
 
 
 class PartnerChatThreadTests(unittest.IsolatedAsyncioTestCase):
+  def test_legacy_list_summary_notes_are_normalized(self) -> None:
+    summary = real_workspace._summary_from_row({
+      "id": "summary-1",
+      "booking_id": "booking-1",
+      "expert_id": "expert-1",
+      "customer_id": "customer-1",
+      "created_at": datetime(2026, 7, 13, tzinfo=timezone.utc),
+      "notes": ["첫 번째 상담 메모", "두 번째 상담 메모"],
+    })
+
+    self.assertEqual(summary["source"], "manual")
+    self.assertEqual(summary["customer_summary"], "첫 번째 상담 메모\n두 번째 상담 메모")
+
   async def test_thread_list_returns_only_latest_message_without_reports(self) -> None:
     booking = {
       "id": "booking-1",
