@@ -875,14 +875,14 @@ export function BookingsPage() {
                           "상담 시작을 누르면 예약 확정 여부와 입장 가능 시간을 확인한 뒤 Chime 미팅/참가자 정보를 발급합니다."}
                       </p>
                       <div className="workflow-call-language">
-                        <Field label="상담 언어">
+                        <Field label="번역 방향">
                           <SelectInput
                             value={callLanguageCode}
                             onChange={(event) => setCallLanguageCode(event.target.value as ConsultingCallLanguageCode)}
                             disabled={Boolean(callJoinResult) || joinCallMutation.isPending}
                           >
-                            <option value="ko-KR">한국어</option>
-                            <option value="en-US">English</option>
+                            <option value="ko-KR">한국어 → English</option>
+                            <option value="en-US">English → 한국어</option>
                           </SelectInput>
                         </Field>
                         {callTranscription ? (

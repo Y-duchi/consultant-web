@@ -11,7 +11,6 @@ import {
   markChatThreadRead,
   sendMessage as sendChatText,
   startBookingCallTranscription,
-  stopBookingCallTranscription,
   translateBookingCallCaption,
   uploadChatAttachment,
 } from "../../services/api";
@@ -31,7 +30,7 @@ import { TextInput } from "../../shared/ui/Field";
 import { PageHeader } from "../../shared/ui/PageHeader";
 import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/StateViews";
 import { formatDateTime, formatTime } from "../../shared/utils/format";
-import type { Attachment, AuthUser, BookingStatus, ChatMessage } from "../../types/domain";
+import type { Attachment, AuthUser, BookingStatus, ChatMessage, ConsultingCallLanguageCode } from "../../types/domain";
 import { AppReportCard } from "../reports/AppReportCard";
 
 export function ChatPage() {
@@ -62,6 +61,7 @@ export function ChatPage() {
   const [callMuted, setCallMuted] = useState(false);
   const [callVideoEnabled, setCallVideoEnabled] = useState(true);
   const [callTranslationActive, setCallTranslationActive] = useState(false);
+  const [callLanguageCode, setCallLanguageCode] = useState<ConsultingCallLanguageCode>("ko-KR");
   const [callCaptions, setCallCaptions] = useState<LiveCallCaption[]>([]);
   const [callSummaryPending, setCallSummaryPending] = useState(false);
   const requestedBookingId = searchParams.get("bookingId")?.trim() ?? "";
@@ -100,7 +100,7 @@ export function ChatPage() {
     }
   };
   const joinCallMutation = useMutation({
-    mutationFn: (bookingId: string) => joinBookingCall(bookingId, "ko-KR", user ?? undefined),
+    mutationFn: (bookingId: string) => joinBookingCall(bookingId, callLanguageCode, user ?? undefined),
     onSuccess: async (result) => {
       if (!callRemoteVideoRef.current || !callLocalVideoRef.current || !callAudioRef.current) {
         setCallError("화상통화 화면을 준비하지 못했습니다. 창을 닫고 다시 시도해 주세요.");
@@ -395,9 +395,6 @@ export function ChatPage() {
   };
 
   const closeVideoCall = async () => {
-    if (callTranslationActive && detail?.booking?.id) {
-      await stopBookingCallTranscription(detail.booking.id, user ?? undefined).catch(() => undefined);
-    }
     await callControllerRef.current?.stop().catch(() => undefined);
     callControllerRef.current = null;
     setCallOpen(false);
@@ -437,16 +434,15 @@ export function ChatPage() {
     if (!bookingId || !callControllerRef.current) return;
     try {
       if (callTranslationActive) {
-        await stopBookingCallTranscription(bookingId, user ?? undefined);
         setCallTranslationActive(false);
         callTranslationActiveRef.current = false;
-        setCallStatus("실시간 번역을 종료했습니다.");
+        setCallStatus("내 화면의 실시간 번역을 껐습니다.");
         return;
       }
-      await startBookingCallTranscription(bookingId, "ko-KR", user ?? undefined, true);
+      await startBookingCallTranscription(bookingId, callLanguageCode, user ?? undefined, true);
       setCallTranslationActive(true);
       callTranslationActiveRef.current = true;
-      setCallStatus("실시간 한·영 자막 번역이 시작됐습니다.");
+      setCallStatus(`${getTranslationDirectionLabel(callLanguageCode)} 번역이 시작됐습니다.`);
     } catch (error) {
       setCallError(error instanceof Error ? error.message : "실시간 번역을 시작하지 못했습니다.");
     }
@@ -704,7 +700,7 @@ export function ChatPage() {
               onClick={() => void toggleCallTranslation()}
               disabled={!callControllerRef.current}
             >
-              {callTranslationActive ? "번역 종료" : "실시간 번역"}
+              {callTranslationActive ? "번역 종료" : `${getTranslationDirectionLabel(callLanguageCode)} 번역`}
             </Button>
             <Button type="button" variant="danger" icon={<PhoneOff size={16} />} onClick={() => void endVideoCall()} disabled={callSummaryPending}>
               {callSummaryPending ? "요약 저장 중" : "통화 종료"}
@@ -759,6 +755,17 @@ export function ChatPage() {
           </aside>
         </div>
         <div className={`chat-call-status ${callError ? "is-error" : ""}`} role="status">
+          <label className="chat-call-translation-direction">
+            <span>번역 방향</span>
+            <select
+              value={callLanguageCode}
+              onChange={(event) => setCallLanguageCode(event.target.value as ConsultingCallLanguageCode)}
+              disabled={callTranslationActive}
+            >
+              <option value="ko-KR">한국어 → English</option>
+              <option value="en-US">English → 한국어</option>
+            </select>
+          </label>
           <strong>{callError ? "연결 실패" : "통화 상태"}</strong>
           <span>{callError || callStatus}</span>
           {callError ? (
@@ -778,6 +785,10 @@ export function ChatPage() {
       </Modal>
     </div>
   );
+}
+
+function getTranslationDirectionLabel(languageCode: ConsultingCallLanguageCode) {
+  return languageCode === "en-US" ? "영→한" : "한→영";
 }
 
 type LiveChatMessage = ChatMessage & {
