@@ -1,13 +1,14 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BellRing, FileImage, Languages, Mic, MicOff, Phone, PhoneOff, Search, Send, Video, VideoOff } from "lucide-react";
+import { BellRing, FileImage, Languages, LogOut, Mic, MicOff, Phone, PhoneOff, Search, Send, Video, VideoOff } from "lucide-react";
 import {
   endBookingCall,
   getChatThreadDetail,
   getChatThreads,
   getPartnerSessionToken,
   joinBookingCall,
+  leaveChatThread,
   markChatThreadRead,
   sendMessage as sendChatText,
   startBookingCallTranscription,
@@ -75,6 +76,17 @@ export function ChatPage() {
     mutationFn: (file: File) => uploadChatAttachment(file, user ?? undefined),
     onSuccess: (attachment) => {
       setPendingAttachments((current) => [...current, attachment]);
+    },
+  });
+  const leaveThreadMutation = useMutation({
+    mutationFn: (threadId: string) => leaveChatThread(threadId, user ?? undefined),
+    onSuccess: () => {
+      socketRef.current?.close();
+      setActiveThreadId(null);
+      setLiveMessages([]);
+      setRealtimeNotice("대화방에서 나갔습니다. 같은 고객의 다음 예약은 새 대화방에서 시작됩니다.");
+      queryClient.invalidateQueries({ queryKey: ["chat-threads"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
     },
   });
   const handleCallTranscriptResults = (bookingId: string, results: WebChimeTranscriptResult[]) => {
@@ -160,7 +172,9 @@ export function ChatPage() {
   const detail = detailQuery.data;
   const selectedReport = detail?.sharedReports.find((report) => report.id === selectedReportId);
   const activeBookingId = detail?.booking?.id;
-  const isClosedBooking = Boolean(detail?.booking && isClosedBookingStatus(detail.booking.status));
+  const isClosedBooking = Boolean(
+    detail?.thread.status === "closed" || (detail?.booking && isClosedBookingStatus(detail.booking.status)),
+  );
   const socketBookingId = useMemo(() => {
     const override = new URLSearchParams(window.location.search).get("bookingId")?.trim();
     return override || activeBookingId;
@@ -258,6 +272,13 @@ export function ChatPage() {
           setRealtimeNotice(event.message);
           window.setTimeout(() => setRealtimeNotice(null), 5200);
           void detailQuery.refetch();
+        }
+
+        if (event.type === "conversation.left") {
+          setRealtimeNotice(event.message);
+          void detailQuery.refetch();
+          void threadsQuery.refetch();
+          return;
         }
 
         if (event.type === "error" && event.clientMessageId) {
@@ -460,6 +481,14 @@ export function ChatPage() {
     setCallVideoEnabled(nextEnabled);
   };
 
+  const leaveConversation = () => {
+    if (!detail?.thread.id || leaveThreadMutation.isPending) return;
+    const confirmed = window.confirm(
+      "이 대화방에서 나갈까요? 대화 기록은 보관되지만 목록에서 숨겨지고, 같은 고객의 다음 예약은 새 대화방에서 시작됩니다.",
+    );
+    if (confirmed) leaveThreadMutation.mutate(detail.thread.id);
+  };
+
   if (threadsQuery.isLoading) return <LoadingState label="고객 대화를 불러오는 중입니다" />;
   if (threadsQuery.isError) return <ErrorState message={threadsQuery.error.message} onRetry={() => threadsQuery.refetch()} />;
 
@@ -534,6 +563,15 @@ export function ChatPage() {
                 >
                   화상통화
                 </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  icon={<LogOut size={16} />}
+                  onClick={leaveConversation}
+                  disabled={leaveThreadMutation.isPending}
+                >
+                  {leaveThreadMutation.isPending ? "나가는 중" : "대화방 나가기"}
+                </Button>
               </>
             ) : (
               <span className="muted">대화를 선택하세요</span>
@@ -542,8 +580,8 @@ export function ChatPage() {
 
           {isClosedBooking ? (
             <div className="closed-thread-banner">
-              <strong>취소된 예약</strong>
-              <span>대화 기록은 확인할 수 있지만 새 메시지는 보낼 수 없습니다.</span>
+              <strong>종료된 대화방</strong>
+              <span>대화 기록은 확인할 수 있지만 새 메시지는 보낼 수 없습니다. 다음 예약은 새 대화방에서 시작됩니다.</span>
             </div>
           ) : null}
 

@@ -189,6 +189,9 @@ export interface Customer {
 
 export interface Booking {
   id: string;
+  conversationId?: string;
+  customerLeftAt?: string | null;
+  expertLeftAt?: string | null;
   customerId: string;
   /** Name entered for this reservation; unlike customerId, it can differ between bookings. */
   customerName?: string;

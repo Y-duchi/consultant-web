@@ -129,6 +129,22 @@ async def confirm_booking_status(booking_id: str, payload: dict, principal: Part
   return ok({"booking": booking})
 
 
+@router.post("/bookings/{booking_id}/confirm")
+async def confirm_booking_after_payment(
+  booking_id: str,
+  payload: dict,
+  principal: PartnerPrincipal = Depends(get_compat_principal),
+):
+  booking = await real_workspace.save_partner_booking_changes(
+    booking_id,
+    {**payload, "mark_payment_paid": True, "status": "confirmed"},
+    principal,
+  )
+  from app.routers.consulting import broadcast_booking_status
+  await broadcast_booking_status(booking_id, str(booking.get("status") or ""), str(booking.get("customer_notice") or ""))
+  return ok({"booking": booking})
+
+
 @router.get("/bookings/{booking_id}/call")
 async def get_booking_call_state(booking_id: str, principal: PartnerPrincipal = Depends(get_compat_principal)):
   return ok({"call": await partner_call.get_call_state(booking_id, principal)})
@@ -217,12 +233,14 @@ async def chat_threads(principal: PartnerPrincipal = Depends(get_compat_principa
     [booking["id"] for booking in bookings]
   )
   threads = []
-  conversations: dict[tuple[str, str], list[dict[str, Any]]] = {}
+  conversations: dict[str, list[dict[str, Any]]] = {}
   for booking in bookings:
-    conversations.setdefault((booking["customer_id"], booking["expert_id"]), []).append(booking)
+    conversations.setdefault(booking.get("conversation_id") or booking["id"], []).append(booking)
 
   for conversation_bookings in conversations.values():
     booking = conversation_bookings[0]
+    if booking.get("expert_left_at"):
+      continue
     customer = customers.get(booking["customer_id"])
     expert = experts.get(booking["expert_id"])
     if customer is None or expert is None:
@@ -254,6 +272,11 @@ async def chat_thread_detail(thread_id: str, principal: PartnerPrincipal = Depen
 @router.post("/chat/threads/{thread_id}/read")
 async def mark_chat_thread_read(thread_id: str, principal: PartnerPrincipal = Depends(get_compat_principal)):
   return ok({"detail": await real_workspace.mark_chat_thread_read(thread_id, principal)})
+
+
+@router.post("/chat/threads/{thread_id}/leave")
+async def leave_chat_thread(thread_id: str, principal: PartnerPrincipal = Depends(get_compat_principal)):
+  return ok(await real_workspace.leave_chat_thread(thread_id, principal))
 
 
 @router.post("/chat/threads/{thread_id}/messages")
@@ -332,7 +355,7 @@ def _camelize(value: Any) -> Any:
 
 def _thread_from_booking(booking: dict[str, Any], messages: list[dict[str, Any]]) -> dict[str, Any]:
   status = "waiting" if booking["status"] in {"requested", "contacting"} else "open"
-  if booking["status"] in {"cancelled", "no_show", "refund_requested"}:
+  if booking["status"] in {"cancelled", "no_show", "refund_requested"} or booking.get("customer_left_at") or booking.get("expert_left_at"):
     status = "closed"
   read_at = booking.get("expert_read_at")
   unread_count = sum(
