@@ -1817,6 +1817,7 @@ async def _list_bookings(principal: PartnerPrincipal | None, filters: dict[str, 
              b.status, b.price, b.created_at, b.updated_at, b.scheduled_date,
              b.slot_start_minutes, b.contact_name, b.contact_phone, b.preferred_contact_method,
              b.operator_note, b.confirmed_at, b.expert_read_at,
+             b.conversation_id::text conversation_id, b.customer_left_at, b.expert_left_at,
              to_jsonb(b)->>'session_mode' as session_mode,
              coalesce(u.name, u.nickname, b.contact_name, '이름 없는 고객') as customer_name,
              u.email::text as customer_email, u.phone as customer_phone,
@@ -2152,21 +2153,31 @@ async def get_partner_customer(customer_id: str, principal: PartnerPrincipal) ->
 
 async def list_partner_chats(principal: PartnerPrincipal) -> list[dict[str, Any]]:
   bookings = await list_partner_bookings(principal)
-  latest_by_conversation: dict[tuple[str, str], dict[str, Any]] = {}
+  latest_by_conversation: dict[str, dict[str, Any]] = {}
   for booking in bookings:
-    latest_by_conversation.setdefault((booking["customer_id"], booking["expert_id"]), booking)
+    if booking.get("expert_left_at"):
+      continue
+    latest_by_conversation.setdefault(booking.get("conversation_id") or booking["id"], booking)
   return [await _thread_from_booking(booking) for booking in latest_by_conversation.values()]
 
 
 async def _conversation_bookings(booking: dict[str, Any], principal: PartnerPrincipal) -> list[dict[str, Any]]:
   customer_bookings = await list_partner_bookings(principal, {"customerId": booking["customer_id"]})
-  return [item for item in customer_bookings if item["expert_id"] == booking["expert_id"]]
+  conversation_id = booking.get("conversation_id") or booking["id"]
+  return [
+    item
+    for item in customer_bookings
+    if (item.get("conversation_id") or item["id"]) == conversation_id
+  ]
 
 
 async def get_chat_thread_detail(thread_id: str, principal: PartnerPrincipal) -> dict[str, Any]:
   booking_id = thread_id.removeprefix("thread-")
   booking = await get_partner_booking(booking_id, principal)
   conversation_bookings = await _conversation_bookings(booking, principal)
+  if conversation_bookings:
+    booking = conversation_bookings[0]
+    thread_id = f"thread-{booking['id']}"
   conversation_booking_ids = [item["id"] for item in conversation_bookings]
   messages_by_booking = await list_chat_messages_for_bookings(conversation_booking_ids)
   messages = sorted(
@@ -2215,7 +2226,11 @@ async def send_chat_message(
   principal: PartnerPrincipal,
 ) -> dict[str, Any]:
   booking_id = thread_id.removeprefix("thread-")
-  booking = await get_partner_booking(booking_id, principal)
+  detail = await get_chat_thread_detail(thread_id, principal)
+  booking = detail["booking"]
+  booking_id = booking["id"]
+  if booking.get("customer_left_at") or booking.get("expert_left_at"):
+    raise HTTPException(status_code=409, detail="나간 대화방에는 새 메시지를 보낼 수 없습니다.")
   clean_body = body.strip()
   if not clean_body:
     raise HTTPException(status_code=422, detail="메시지 내용을 입력해 주세요.")
@@ -2255,6 +2270,26 @@ async def send_chat_message(
   }
 
 
+async def leave_chat_thread(thread_id: str, principal: PartnerPrincipal) -> dict[str, Any]:
+  booking_id = thread_id.removeprefix("thread-")
+  booking = await get_partner_booking(booking_id, principal)
+  conversation_id = booking.get("conversation_id") or booking["id"]
+  conn = await _connect()
+  try:
+    await conn.execute(
+      """
+      update consulting_bookings
+      set expert_left_at = coalesce(expert_left_at, now()), updated_at = now()
+      where conversation_id::text = $1 and expert_id = $2
+      """,
+      conversation_id,
+      booking["expert_id"],
+    )
+  finally:
+    await conn.close()
+  return {"conversation_id": conversation_id, "left": True}
+
+
 async def _thread_from_booking(booking: dict[str, Any], booking_ids: list[str] | None = None) -> dict[str, Any]:
   conversation_booking_ids = booking_ids or [booking["id"]]
   conn = await _connect()
@@ -2276,7 +2311,7 @@ async def _thread_from_booking(booking: dict[str, Any], booking_ids: list[str] |
   finally:
     await conn.close()
   status = "waiting" if booking["status"] in {"requested", "contacting"} else "open"
-  if booking["status"] in {"cancelled", "no_show", "refund_requested"}:
+  if booking["status"] in {"cancelled", "no_show", "refund_requested"} or booking.get("customer_left_at") or booking.get("expert_left_at"):
     status = "closed"
   return {
     "id": f"thread-{booking['id']}",
@@ -2698,6 +2733,9 @@ def _booking_from_row(row: asyncpg.Record) -> dict[str, Any]:
   status = "no_show" if row["status"] == "canceled" and "노쇼 처리" in operator_note else _domain_status(row["status"])
   return {
     "id": row["id"],
+    "conversation_id": row["conversation_id"] or row["id"],
+    "customer_left_at": _iso(row["customer_left_at"]) if row["customer_left_at"] else None,
+    "expert_left_at": _iso(row["expert_left_at"]) if row["expert_left_at"] else None,
     "customer_id": row["user_id"],
     "expert_id": row["expert_id"],
     "business_id": _business_id_for_expert(row["expert_id"]),

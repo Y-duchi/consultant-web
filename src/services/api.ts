@@ -958,6 +958,18 @@ export async function saveBookingChanges(bookingId: string, changes: BookingSave
       return true;
     }).map(([key]) => key);
 
+    if (changes.markPaymentPaid && changes.status === "confirmed") {
+      const data = await requestPartnerJson<{ booking: Booking }>(
+        `/bookings/${encodeURIComponent(bookingId)}/confirm`,
+        {
+          method: "POST",
+          body: JSON.stringify(toSnakeDeep(changes)),
+        },
+      );
+      rememberBookings([data.booking]);
+      return clone(data.booking);
+    }
+
     // Status and manual-deposit actions have dedicated POST/PATCH endpoints.
     // Keeping these calls separate avoids proxies/CDNs that reject the generic
     // booking PATCH while preserving the atomic generic PATCH for edits + notes.
@@ -1214,6 +1226,16 @@ export async function markChatThreadRead(threadId: string, user?: AuthUser): Pro
   thread.unreadCount = 0;
   thread.status = "open";
   return clone(makeChatThreadDetail(thread));
+}
+
+export async function leaveChatThread(threadId: string, user?: AuthUser): Promise<void> {
+  if (shouldUsePartnerApi(user)) {
+    await requestPartnerJson(`/chat/threads/${encodeURIComponent(threadId)}/leave`, { method: "POST" });
+    return;
+  }
+  await delay();
+  const thread = findThread(threadId, user);
+  thread.status = "closed";
 }
 
 export async function uploadChatAttachment(file: File, user?: AuthUser): Promise<Attachment> {
