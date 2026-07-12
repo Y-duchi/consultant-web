@@ -155,6 +155,7 @@ export type ConsultingConversationSocketClient = {
 const INITIAL_RECONNECT_DELAY_MS = 500;
 const MAX_RECONNECT_DELAY_MS = 5000;
 const MAX_RECONNECT_ATTEMPTS = 7;
+const DEPLOYED_CONSULTING_API_BASE_URL = "https://d3t1pbvtir1lj.cloudfront.net/api/consulting";
 
 function getConsultingRealtimeApiBaseUrl() {
   const explicit = import.meta.env.VITE_CONSULTING_API_BASE_URL?.trim();
@@ -168,7 +169,7 @@ function getConsultingRealtimeApiBaseUrl() {
     window.location.hostname !== "localhost" &&
     window.location.hostname !== "127.0.0.1"
   ) {
-    return `${window.location.origin}/api/consulting`;
+    return DEPLOYED_CONSULTING_API_BASE_URL;
   }
 
   return normalizeConsultingApiBaseUrl(import.meta.env.VITE_API_BASE_URL?.trim() || "http://127.0.0.1:8000");

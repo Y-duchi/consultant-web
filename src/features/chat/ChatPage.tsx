@@ -133,6 +133,8 @@ export function ChatPage() {
   const threadsQuery = useQuery({
     queryKey: chatThreadsQueryKey,
     queryFn: () => getChatThreads(user ?? undefined),
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: true,
   });
   const filteredThreads = useMemo(() => {
     const source = threadsQuery.data ?? [];
@@ -154,6 +156,8 @@ export function ChatPage() {
     queryKey: ["chat-thread-detail", activeThreadId, user?.id, user?.businessId],
     queryFn: () => getChatThreadDetail(activeThreadId!, user ?? undefined),
     enabled: Boolean(activeThreadId),
+    refetchInterval: socketStatus === "connected" ? false : 2_000,
+    refetchIntervalInBackground: true,
   });
 
   const detail = detailQuery.data;
@@ -281,7 +285,7 @@ export function ChatPage() {
         socketRef.current = null;
       }
     };
-  }, [detail, partnerSessionToken, socketBookingId, user]);
+  }, [detail?.thread.id, partnerSessionToken, socketBookingId, user]);
 
   const sendLiveMessage = async (targetMessage: LiveChatMessage) => {
     if (!socketBookingId || !detail) return false;
