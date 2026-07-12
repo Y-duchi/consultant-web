@@ -180,6 +180,23 @@ class PartnerCallTests(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(result["participant_language_code"], "en-US")
     self.assertEqual(self.state["session"]["expert_language_code"], "en-US")
 
+  async def test_early_join_window_can_be_disabled(self) -> None:
+    self.booking = make_booking(
+      starts_at=datetime.now(timezone.utc) + timedelta(days=7),
+    )
+
+    result = await partner_call.join_call(
+      self.booking["id"],
+      self.principal,
+      "ko-KR",
+      Settings(
+        chime_enabled=True,
+        consulting_call_enforce_early_window=False,
+      ),
+    )
+
+    self.assertEqual(result["meeting"]["MeetingId"], "meeting-1")
+
   async def test_in_progress_booking_can_rejoin_chime_call(self) -> None:
     self.booking = make_booking(status="in_progress")
 
