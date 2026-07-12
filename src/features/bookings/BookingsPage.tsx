@@ -313,13 +313,6 @@ export function BookingsPage() {
         )
           .then((translation) => {
             setCallCaptions((current) => applyCaptionTranslation(current, translation));
-            captionSocketRef.current?.sendCaptionTranslation({
-              bookingId,
-              resultId: translation.resultId,
-              sourceLanguageCode: translation.sourceLanguageCode,
-              targetLanguageCode: translation.targetLanguageCode,
-              translatedContent: translation.translatedContent,
-            });
           })
           .catch((error: unknown) => {
             const message = error instanceof Error ? error.message : "확정 자막 번역에 실패했습니다.";

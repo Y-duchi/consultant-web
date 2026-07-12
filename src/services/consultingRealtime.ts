@@ -150,7 +150,6 @@ export type ConsultingConversationSocketClient = {
     clientMessageId: string;
     mediaIds?: string[];
   }) => boolean;
-  sendCaptionTranslation: (payload: Omit<ConsultingCaptionTranslationEvent, "type">) => boolean;
 };
 
 const INITIAL_RECONNECT_DELAY_MS = 500;
@@ -311,7 +310,6 @@ export function connectConsultingConversationSocket({
       connect();
     },
     send,
-    sendCaptionTranslation: (payload) => send({ ...payload, type: "caption.translation" }),
     sendMessage: (payload) => send({ ...payload, type: "message.send" }),
   };
 }

@@ -1405,6 +1405,7 @@ function normalizeCallState(value: unknown, bookingId: string): ConsultingCallSt
     endedAt: raw.endedAt ? String(raw.endedAt) : null,
     chimeEnabled: Boolean(raw.chimeEnabled),
     transcription: normalizeCallTranscription(raw.transcription),
+    summaryStatus: raw.summaryStatus === "succeeded" || raw.summaryStatus === "failed" ? raw.summaryStatus : null,
   };
 }
 
@@ -1478,11 +1479,18 @@ export async function joinBookingCall(
   throw new Error("로컬 목업에서는 Chime 화상상담 입장을 지원하지 않습니다.");
 }
 
-export async function endBookingCall(bookingId: string, user?: AuthUser): Promise<ConsultingCallState> {
+export async function endBookingCall(
+  bookingId: string,
+  user?: AuthUser,
+  transcript?: string,
+): Promise<ConsultingCallState> {
   if (shouldUsePartnerApi(user)) {
     const data = await requestPartnerJson<{ call: unknown }>(
       `/bookings/${encodeURIComponent(bookingId)}/call/end`,
-      { method: "POST" },
+      {
+        method: "POST",
+        body: JSON.stringify({ transcript: transcript?.trim() || undefined }),
+      },
     );
     return normalizeCallState(data.call, bookingId);
   }
