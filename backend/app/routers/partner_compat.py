@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from enum import Enum
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
@@ -140,8 +141,13 @@ async def join_booking_call(booking_id: str, payload: dict, principal: PartnerPr
 
 
 @router.post("/bookings/{booking_id}/call/end")
-async def end_booking_call(booking_id: str, principal: PartnerPrincipal = Depends(get_compat_principal)):
-  return ok({"call": await partner_call.end_call(booking_id, principal)})
+async def end_booking_call(
+  booking_id: str,
+  payload: dict | None = None,
+  principal: PartnerPrincipal = Depends(get_compat_principal),
+):
+  transcript = (payload or {}).get("transcript")
+  return ok({"call": await partner_call.end_call(booking_id, principal, transcript=transcript)})
 
 
 @router.post("/bookings/{booking_id}/call/transcription/start")
@@ -212,13 +218,24 @@ async def chat_threads(principal: PartnerPrincipal = Depends(get_compat_principa
     real_workspace.list_chat_messages_for_bookings([booking["id"] for booking in bookings]),
   )
   threads = []
+  conversations: dict[tuple[str, str], list[dict[str, Any]]] = {}
   for booking in bookings:
+    conversations.setdefault((booking["customer_id"], booking["expert_id"]), []).append(booking)
+
+  for conversation_bookings in conversations.values():
+    booking = conversation_bookings[0]
     customer = customers.get(booking["customer_id"])
     expert = experts.get(booking["expert_id"])
     if customer is None or expert is None:
       continue
     reports = reports_by_customer.get(customer["id"], [])
-    messages = messages_by_booking.get(booking["id"], [])
+    thread_id = f"thread-{booking['id']}"
+    messages = sorted(
+      [message for item in conversation_bookings for message in messages_by_booking.get(item["id"], [])],
+      key=lambda message: message["sent_at"],
+    )
+    for message in messages:
+      message["thread_id"] = thread_id
     threads.append({
       "thread": _thread_from_booking(booking, messages),
       "customer": customer,
@@ -238,6 +255,22 @@ async def chat_thread_detail(thread_id: str, principal: PartnerPrincipal = Depen
 @router.post("/chat/threads/{thread_id}/read")
 async def mark_chat_thread_read(thread_id: str, principal: PartnerPrincipal = Depends(get_compat_principal)):
   return ok({"detail": await real_workspace.mark_chat_thread_read(thread_id, principal)})
+
+
+@router.post("/chat/threads/{thread_id}/messages")
+async def send_chat_message(
+  thread_id: str,
+  payload: dict,
+  principal: PartnerPrincipal = Depends(get_compat_principal),
+):
+  return ok({
+    "message": await real_workspace.send_chat_message(
+      thread_id,
+      str(payload.get("body") or ""),
+      str(payload.get("clientMessageId") or payload.get("client_message_id") or uuid4()),
+      principal,
+    )
+  })
 
 
 @router.get("/shared-reports")
@@ -300,7 +333,7 @@ def _camelize(value: Any) -> Any:
 
 def _thread_from_booking(booking: dict[str, Any], messages: list[dict[str, Any]]) -> dict[str, Any]:
   status = "waiting" if booking["status"] in {"requested", "contacting"} else "open"
-  if booking["status"] in {"completed", "cancelled", "no_show"}:
+  if booking["status"] in {"cancelled", "no_show", "refund_requested"}:
     status = "closed"
   read_at = booking.get("expert_read_at")
   unread_count = sum(

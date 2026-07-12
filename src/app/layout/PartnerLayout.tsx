@@ -454,7 +454,7 @@ function mapRealtimeMessage(event: ConsultingRealtimeMessageEvent, threadId: str
 }
 
 function isClosedBookingStatus(status: BookingStatus) {
-  return ["cancelled", "completed", "no_show", "refund_requested"].includes(status);
+  return ["cancelled", "no_show", "refund_requested"].includes(status);
 }
 
 function isNewBookingNotificationStatus(status: BookingStatus) {
