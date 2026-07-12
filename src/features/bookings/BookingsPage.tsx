@@ -143,6 +143,12 @@ export function BookingsPage() {
     queryFn: () => getBookingDetail(selectedBookingId!, user ?? undefined),
     enabled: Boolean(selectedBookingId),
   });
+  const notificationDetailQuery = useQuery({
+    queryKey: ["booking-notification-detail", requestedBookingId, user?.id, user?.businessId],
+    queryFn: () => getBookingDetail(requestedBookingId, user ?? undefined),
+    enabled: Boolean(requestedBookingId && !selectedBookingId),
+    retry: 1,
+  });
 
   const invalidateBookings = () => {
     queryClient.invalidateQueries({ queryKey: ["bookings"] });
@@ -491,16 +497,30 @@ export function BookingsPage() {
   };
 
   useEffect(() => {
-    if (!requestedBookingId || selectedBookingId || bookings.length === 0) return;
-    const requestedBooking = bookings.find((booking) => booking.id === requestedBookingId);
+    if (!requestedBookingId || selectedBookingId) return;
+    const notificationDetail = notificationDetailQuery.data;
+    const requestedBooking =
+      bookings.find((booking) => booking.id === requestedBookingId) ?? notificationDetail?.booking;
     if (!requestedBooking) return;
+    if (notificationDetail) {
+      queryClient.setQueryData(
+        ["booking-detail", requestedBooking.id, user?.id, user?.businessId],
+        notificationDetail,
+      );
+    }
     setAnchorDate(new Date(requestedBooking.startsAt));
     openBooking(requestedBooking);
-  }, [bookings, requestedBookingId, selectedBookingId]);
+  }, [bookings, notificationDetailQuery.data, queryClient, requestedBookingId, selectedBookingId, user?.businessId, user?.id]);
 
   if (bookingsQuery.isLoading) return <LoadingState label="예약 데이터를 불러오는 중입니다" />;
   if (bookingsQuery.isError) return <ErrorState message={bookingsQuery.error.message} onRetry={() => bookingsQuery.refetch()} />;
   if (settingsQuery.isError) return <ErrorState message={settingsQuery.error.message} onRetry={() => settingsQuery.refetch()} />;
+  if (requestedBookingId && !selectedBookingId && notificationDetailQuery.isLoading) {
+    return <LoadingState label="알림의 예약 상세를 불러오는 중입니다" />;
+  }
+  if (requestedBookingId && !selectedBookingId && notificationDetailQuery.isError) {
+    return <ErrorState message={notificationDetailQuery.error.message} onRetry={() => notificationDetailQuery.refetch()} />;
+  }
 
   return (
     <>
