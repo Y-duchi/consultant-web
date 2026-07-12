@@ -213,9 +213,8 @@ async def chat_threads(principal: PartnerPrincipal = Depends(get_compat_principa
   )
   customers = {item["id"]: item for item in customer_records}
   experts = {item["id"]: item for item in expert_records}
-  reports_by_customer, messages_by_booking = await asyncio.gather(
-    real_workspace.list_shared_reports_for_bookings(bookings),
-    real_workspace.list_chat_messages_for_bookings([booking["id"] for booking in bookings]),
+  messages_by_booking = await real_workspace.list_chat_messages_for_bookings(
+    [booking["id"] for booking in bookings]
   )
   threads = []
   conversations: dict[tuple[str, str], list[dict[str, Any]]] = {}
@@ -228,7 +227,6 @@ async def chat_threads(principal: PartnerPrincipal = Depends(get_compat_principa
     expert = experts.get(booking["expert_id"])
     if customer is None or expert is None:
       continue
-    reports = reports_by_customer.get(customer["id"], [])
     thread_id = f"thread-{booking['id']}"
     messages = sorted(
       [message for item in conversation_bookings for message in messages_by_booking.get(item["id"], [])],
@@ -236,13 +234,14 @@ async def chat_threads(principal: PartnerPrincipal = Depends(get_compat_principa
     )
     for message in messages:
       message["thread_id"] = thread_id
+    latest_messages = messages[-1:]
     threads.append({
       "thread": _thread_from_booking(booking, messages),
       "customer": customer,
       "booking": booking,
       "expert": expert,
-      "shared_reports": reports,
-      "messages": messages,
+      "shared_reports": [],
+      "messages": latest_messages,
     })
   return ok({"threads": threads})
 

@@ -76,14 +76,14 @@ export function PartnerLayout() {
     queryKey: chatThreadsQueryKey,
     queryFn: () => getChatThreads(user ?? undefined),
     enabled: Boolean(user),
-    refetchInterval: 5_000,
+    refetchInterval: 15_000,
   });
   const bookingNotificationsQuery = useQuery({
     queryKey: ["booking-notifications", user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
     queryFn: () => getBookings({ sort: "createdDesc" }, user ?? undefined),
     enabled: Boolean(user),
-    refetchInterval: 5_000,
-    refetchIntervalInBackground: true,
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
   });
   const unreadChatCount = (unreadChatQuery.data ?? []).reduce((total, item) => total + item.thread.unreadCount, 0);
   const unreadNotificationCount = notifications.filter((notification) => !notification.read).length;

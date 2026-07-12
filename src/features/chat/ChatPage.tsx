@@ -15,11 +15,7 @@ import {
   translateBookingCallCaption,
   uploadChatAttachment,
 } from "../../services/api";
-import {
-  startWebChimeMeeting,
-  type WebChimeMeetingController,
-  type WebChimeTranscriptResult,
-} from "../../services/chimeMeetingClient";
+import type { WebChimeMeetingController, WebChimeTranscriptResult } from "../../services/chimeMeetingClient";
 import {
   connectConsultingConversationSocket,
   type ConsultingConversationSocketClient,
@@ -112,6 +108,7 @@ export function ChatPage() {
       }
       try {
         setCallStatus("카메라와 마이크를 연결하는 중입니다.");
+        const { startWebChimeMeeting } = await import("../../services/chimeMeetingClient");
         callControllerRef.current = await startWebChimeMeeting(result, {
           remoteVideoElement: callRemoteVideoRef.current,
           localVideoElement: callLocalVideoRef.current,
@@ -133,8 +130,8 @@ export function ChatPage() {
   const threadsQuery = useQuery({
     queryKey: chatThreadsQueryKey,
     queryFn: () => getChatThreads(user ?? undefined),
-    refetchInterval: 5_000,
-    refetchIntervalInBackground: true,
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
   });
   const filteredThreads = useMemo(() => {
     const source = threadsQuery.data ?? [];

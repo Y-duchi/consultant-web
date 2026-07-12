@@ -1,24 +1,27 @@
+import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AdminLayout } from "./layout/AdminLayout";
 import { PartnerLayout } from "./layout/PartnerLayout";
-import { AdminBookingsPage } from "../features/admin/AdminBookingsPage";
-import { AdminDashboardPage } from "../features/admin/AdminDashboardPage";
-import { AdminPartnersPage } from "../features/admin/AdminPartnersPage";
-import { AdminSummaryJobsPage } from "../features/admin/AdminSummaryJobsPage";
-import { ApplicationStatusPage } from "../features/applications/ApplicationStatusPage";
-import { ApplicationsPage } from "../features/applications/ApplicationsPage";
 import { ApplyPage } from "../features/applications/ApplyPage";
 import { LoginPage } from "../features/auth/LoginPage";
-import { PasswordChangePage } from "../features/auth/PasswordChangePage";
-import { BookingsPage } from "../features/bookings/BookingsPage";
-import { ChatPage } from "../features/chat/ChatPage";
-import { CompletionPage } from "../features/completion/CompletionPage";
-import { CustomersPage } from "../features/customers/CustomersPage";
-import { DashboardPage } from "../features/dashboard/DashboardPage";
-import { ProfilePage } from "../features/profile/ProfilePage";
-import { ReviewsPage } from "../features/reviews/ReviewsPage";
-import { SettingsPage } from "../features/settings/SettingsPage";
 import { useAuth } from "../features/auth/AuthContext";
+import { LoadingState } from "../shared/ui/StateViews";
+
+const AdminBookingsPage = lazy(() => import("../features/admin/AdminBookingsPage").then((module) => ({ default: module.AdminBookingsPage })));
+const AdminDashboardPage = lazy(() => import("../features/admin/AdminDashboardPage").then((module) => ({ default: module.AdminDashboardPage })));
+const AdminPartnersPage = lazy(() => import("../features/admin/AdminPartnersPage").then((module) => ({ default: module.AdminPartnersPage })));
+const AdminSummaryJobsPage = lazy(() => import("../features/admin/AdminSummaryJobsPage").then((module) => ({ default: module.AdminSummaryJobsPage })));
+const ApplicationStatusPage = lazy(() => import("../features/applications/ApplicationStatusPage").then((module) => ({ default: module.ApplicationStatusPage })));
+const ApplicationsPage = lazy(() => import("../features/applications/ApplicationsPage").then((module) => ({ default: module.ApplicationsPage })));
+const PasswordChangePage = lazy(() => import("../features/auth/PasswordChangePage").then((module) => ({ default: module.PasswordChangePage })));
+const BookingsPage = lazy(() => import("../features/bookings/BookingsPage").then((module) => ({ default: module.BookingsPage })));
+const ChatPage = lazy(() => import("../features/chat/ChatPage").then((module) => ({ default: module.ChatPage })));
+const CompletionPage = lazy(() => import("../features/completion/CompletionPage").then((module) => ({ default: module.CompletionPage })));
+const CustomersPage = lazy(() => import("../features/customers/CustomersPage").then((module) => ({ default: module.CustomersPage })));
+const DashboardPage = lazy(() => import("../features/dashboard/DashboardPage").then((module) => ({ default: module.DashboardPage })));
+const ProfilePage = lazy(() => import("../features/profile/ProfilePage").then((module) => ({ default: module.ProfilePage })));
+const ReviewsPage = lazy(() => import("../features/reviews/ReviewsPage").then((module) => ({ default: module.ReviewsPage })));
+const SettingsPage = lazy(() => import("../features/settings/SettingsPage").then((module) => ({ default: module.SettingsPage })));
 
 export function App() {
   const { isAuthenticated, user } = useAuth();
@@ -35,7 +38,8 @@ export function App() {
     Boolean(user?.passwordChangeRequired);
 
   return (
-    <Routes>
+    <Suspense fallback={<LoadingState label="화면을 불러오는 중입니다" />}>
+      <Routes>
       <Route path="/apply" element={<ApplyPage />} />
       <Route
         path="/login"
@@ -94,7 +98,8 @@ export function App() {
       <Route path="/profile" element={<Navigate to="/workspace/profile" replace />} />
       <Route path="/settings" element={<Navigate to="/workspace/settings" replace />} />
       <Route path="*" element={<Navigate to={isAuthenticated ? getHomePath(user, shouldShowApplicationStatus, shouldRequirePasswordChange) : "/login"} replace />} />
-    </Routes>
+      </Routes>
+    </Suspense>
   );
 }
 
