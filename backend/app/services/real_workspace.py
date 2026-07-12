@@ -2873,7 +2873,7 @@ def _feedback_report_from_row(row: asyncpg.Record, *, include_detail: bool) -> d
 
 
 def _summary_from_row(row: asyncpg.Record) -> dict[str, Any]:
-  notes = _json(row["notes"])
+  notes = _normalize_summary_notes(row["notes"])
   return {
     "id": row["id"],
     "booking_id": row["booking_id"],
@@ -2891,6 +2891,25 @@ def _summary_from_row(row: asyncpg.Record) -> dict[str, Any]:
     "delivered_report_ids": notes.get("deliveredReportIds") or notes.get("delivered_report_ids") or [],
     "review_request_status": notes.get("reviewRequestStatus") or "ready",
   }
+
+
+def _normalize_summary_notes(value: Any) -> dict[str, Any]:
+  parsed = _json(value)
+  if isinstance(parsed, dict):
+    return parsed
+  if not isinstance(parsed, list):
+    return {}
+
+  notes: dict[str, Any] = {}
+  legacy_text: list[str] = []
+  for item in parsed:
+    if isinstance(item, dict):
+      notes.update(item)
+    elif str(item or "").strip():
+      legacy_text.append(str(item).strip())
+  if legacy_text and not any(key in notes for key in ("customerSummary", "customer_summary", "summary")):
+    notes["customerSummary"] = "\n".join(legacy_text)
+  return notes
 
 
 def _application_from_row(row: asyncpg.Record) -> dict[str, Any]:

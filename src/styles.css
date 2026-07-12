@@ -658,6 +658,46 @@ a {
   border-width: 0 0 1px;
 }
 
+.pending-booking-panel {
+  margin-bottom: 14px;
+}
+
+.pending-booking-list {
+  display: grid;
+}
+
+.pending-booking-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pending-booking-row:last-child {
+  border-bottom: 0;
+}
+
+.pending-booking-summary {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.pending-booking-summary strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pending-booking-summary span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .customer-filter-bar .search-input {
   min-width: 240px;
 }
@@ -3305,6 +3345,15 @@ a {
   }
 
   .email-verification-row .button {
+    width: 100%;
+  }
+
+  .pending-booking-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .pending-booking-row .button {
+    grid-column: 1 / -1;
     width: 100%;
   }
 

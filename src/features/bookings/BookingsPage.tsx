@@ -124,6 +124,10 @@ export function BookingsPage() {
     queryKey: ["bookings", deferredQuery, status, user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
     queryFn: () => getBookings({ query: deferredQuery, status, sort: "startsAtAsc" }, user ?? undefined),
   });
+  const pendingBookingsQuery = useQuery({
+    queryKey: ["bookings", "pending-queue", user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
+    queryFn: () => getBookings({ sort: "createdDesc" }, user ?? undefined),
+  });
   const expertsQuery = useQuery({
     queryKey: ["experts", user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
     queryFn: () => getExperts(user ?? undefined),
@@ -230,6 +234,10 @@ export function BookingsPage() {
   }, []);
 
   const bookings = bookingsQuery.data ?? [];
+  const pendingBookings = useMemo(
+    () => (pendingBookingsQuery.data ?? []).filter((booking) => isDepositWorkflowBooking(booking)),
+    [pendingBookingsQuery.data],
+  );
   const visibleDates = useMemo(() => getVisibleDates(anchorDate, view), [anchorDate, view]);
   const scheduleSummary = useMemo(
     () => buildVisibleScheduleSummary(visibleDates, settingsQuery.data),
@@ -450,17 +458,37 @@ export function BookingsPage() {
     return { ...changes, ...extra };
   };
 
-  const openDepositMessage = () => {
+  const getDepositMessage = () => {
     if (!selectedDetail || !previewBooking) return;
     const amount = formatCurrency(previewBooking.paidAmount);
-    const template = [
+    return [
       `안녕하세요, ${selectedDetail.customer.name}님. 예약 확정을 위한 입금 안내드립니다.`,
       `입금 금액: ${amount}`,
       "입금 계좌: [은행 / 계좌번호를 입력하세요]",
       "입금자명: [입금자 성함]",
       "입금이 확인되면 예약 완료로 처리해 드리겠습니다.",
     ].join("\n");
+  };
+
+  const openDepositMessage = () => {
+    if (!selectedDetail) return;
+    const template = getDepositMessage();
+    if (!template) return;
     navigate(`/workspace/chat?bookingId=${selectedDetail.booking.id}&compose=${encodeURIComponent(template)}`);
+  };
+
+  const acceptBookingAndOpenChat = () => {
+    if (!selectedDetail) return;
+    const template = getDepositMessage();
+    if (!template) return;
+    saveChangesMutation.mutate(
+      { bookingId: selectedDetail.booking.id, changes: { status: "contacting" } },
+      {
+        onSuccess: (booking) => {
+          navigate(`/workspace/chat?bookingId=${booking.id}&compose=${encodeURIComponent(template)}`);
+        },
+      },
+    );
   };
 
   const completeBookingAfterDeposit = () => {
@@ -534,6 +562,39 @@ export function BookingsPage() {
           </Button>
         }
       />
+
+      {pendingBookings.length ? (
+        <section className="panel pending-booking-panel" aria-label="처리 대기 예약">
+          <div className="panel-header">
+            <div>
+              <h2>처리 대기 예약</h2>
+              <p>알림을 닫아도 이 목록에서 신청을 수락하고 고객 채팅을 이어갈 수 있습니다.</p>
+            </div>
+            <span className="tag">{pendingBookings.length}건</span>
+          </div>
+          <div className="pending-booking-list">
+            {pendingBookings.map((booking) => (
+              <div className="pending-booking-row" key={booking.id}>
+                <BookingStatusBadge status={booking.status} />
+                <div className="pending-booking-summary">
+                  <strong>{booking.customerName || "고객"}</strong>
+                  <span>{booking.type} · {formatDateTime(booking.startsAt)}</span>
+                </div>
+                <Button
+                  variant="primary"
+                  icon={<CheckCircle2 size={16} />}
+                  onClick={() => {
+                    setAnchorDate(new Date(booking.startsAt));
+                    openBooking(booking);
+                  }}
+                >
+                  신청 확인
+                </Button>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <div className="filter-bar">
         <Search size={17} />
@@ -836,8 +897,13 @@ export function BookingsPage() {
                           <strong>입금 안내 메시지 보내기</strong>
                           <p>채팅방에서 계좌와 금액을 확인해 고객에게 안내합니다.</p>
                         </div>
-                        <Button variant="secondary" icon={<MessageSquareText size={16} />} onClick={openDepositMessage}>
-                          메시지 작성
+                        <Button
+                          variant={previewBooking.status === "requested" ? "primary" : "secondary"}
+                          icon={<MessageSquareText size={16} />}
+                          onClick={previewBooking.status === "requested" ? acceptBookingAndOpenChat : openDepositMessage}
+                          disabled={saveChangesMutation.isPending}
+                        >
+                          {previewBooking.status === "requested" ? "신청 수락·메시지 작성" : "메시지 작성"}
                         </Button>
                       </div>
                       <div className="simple-booking-step is-primary">
