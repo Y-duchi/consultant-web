@@ -1740,6 +1740,28 @@ a {
   color: #fff;
 }
 
+.chat-call-translation-direction {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  margin-right: auto;
+}
+
+.chat-call-translation-direction span {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.chat-call-translation-direction select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  min-height: 34px;
+  padding: 0 10px;
+}
+
 .chat-call-status span {
   flex: 1;
 }
