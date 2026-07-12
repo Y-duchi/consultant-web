@@ -98,6 +98,8 @@ export function BookingsPage() {
   const callLocalVideoRef = useRef<HTMLVideoElement | null>(null);
   const callRemoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const chimeClientRef = useRef<WebChimeMeetingController | null>(null);
+  const chimeStartInFlightRef = useRef(false);
+  const chimeStartGenerationRef = useRef(0);
   const captionSocketRef = useRef<ConsultingConversationSocketClient | null>(null);
   const translatedCaptionIdsRef = useRef<Set<string>>(new Set());
   const [callCaptions, setCallCaptions] = useState<CallCaptionViewModel[]>([]);
@@ -207,6 +209,8 @@ export function BookingsPage() {
   });
 
   const stopWebMeeting = useCallback(async () => {
+    chimeStartGenerationRef.current += 1;
+    chimeStartInFlightRef.current = false;
     const client = chimeClientRef.current;
     chimeClientRef.current = null;
     if (!client) return;
@@ -333,6 +337,7 @@ export function BookingsPage() {
     if (
       !callJoinResult ||
       chimeClientRef.current ||
+      chimeStartInFlightRef.current ||
       !callAudioRef.current ||
       !callLocalVideoRef.current ||
       !callRemoteVideoRef.current
@@ -340,6 +345,8 @@ export function BookingsPage() {
       return;
     }
 
+    const startGeneration = ++chimeStartGenerationRef.current;
+    chimeStartInFlightRef.current = true;
     void startWebChimeMeeting(callJoinResult, {
       audioElement: callAudioRef.current,
       localVideoElement: callLocalVideoRef.current,
@@ -355,8 +362,15 @@ export function BookingsPage() {
         }
       },
     }).then((controller) => {
+      if (startGeneration !== chimeStartGenerationRef.current) {
+        void controller.stop();
+        return;
+      }
+      chimeStartInFlightRef.current = false;
       chimeClientRef.current = controller;
     }).catch((error: unknown) => {
+      if (startGeneration !== chimeStartGenerationRef.current) return;
+      chimeStartInFlightRef.current = false;
       const message = error instanceof Error ? error.message : "Chime 미팅 연결에 실패했습니다.";
       setCallConnectionStatus("failed");
       setCallConnectionError(message);

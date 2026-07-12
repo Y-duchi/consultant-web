@@ -120,7 +120,7 @@ export async function startWebChimeMeeting(
   let transcriptEventCallback: ((transcriptEvent: TranscriptEvent) => void) | null = null;
 
   audioVideo.chooseVideoInputQuality(1280, 720, 30);
-  audioVideo.setVideoMaxBandwidthKbps(1400);
+  audioVideo.setVideoMaxBandwidthKbps(2500);
 
   const observer: AudioVideoObserver = {
     audioVideoDidStart: () => elements.onStatusChange?.("Chime 미디어 세션이 시작됐습니다."),

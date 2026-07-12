@@ -15,7 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../features/auth/AuthContext";
-import { getChatThreads, getPartnerSessionToken, type ChatThreadDetail } from "../../services/api";
+import { getBookings, getChatThreads, getPartnerSessionToken, type ChatThreadDetail } from "../../services/api";
 import {
   connectConsultingConversationSocket,
   type ConsultingRealtimeMessageEvent,
@@ -58,7 +58,10 @@ export function PartnerLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const previousBookingIdsRef = useRef<Set<string> | null>(null);
+  const seenBookingNotificationAccountIdRef = useRef<string | null>(null);
+  const seenBookingNotificationIdsRef = useRef<Set<string> | null>(null);
+  const readNotificationAccountIdRef = useRef<string | null>(null);
+  const readNotificationIdsRef = useRef<Set<string> | null>(null);
   const seenRealtimeEventsRef = useRef(new Set<string>());
   const toastTimerRef = useRef<number | null>(null);
   const [notifications, setNotifications] = useState<PartnerNotification[]>([]);
@@ -74,6 +77,13 @@ export function PartnerLayout() {
     queryFn: () => getChatThreads(user ?? undefined),
     enabled: Boolean(user),
     refetchInterval: 5_000,
+  });
+  const bookingNotificationsQuery = useQuery({
+    queryKey: ["booking-notifications", user?.id, user?.businessId, user?.expertId, user?.workspaceScope],
+    queryFn: () => getBookings({ sort: "createdDesc" }, user ?? undefined),
+    enabled: Boolean(user),
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: true,
   });
   const unreadChatCount = (unreadChatQuery.data ?? []).reduce((total, item) => total + item.thread.unreadCount, 0);
   const unreadNotificationCount = notifications.filter((notification) => !notification.read).length;
@@ -95,13 +105,35 @@ export function PartnerLayout() {
   const realtimeTargetsKey = realtimeTargets.map((target) => `${target.threadId}:${target.bookingId}`).join("|");
 
   const pushNotification = useCallback((notification: Omit<PartnerNotification, "read">) => {
-    const nextNotification = { ...notification, read: false };
+    if (!user?.id) return;
+    const storageKey = `aura:partner-read-notifications:${user.id}`;
+    if (readNotificationAccountIdRef.current !== user.id || !readNotificationIdsRef.current) {
+      readNotificationAccountIdRef.current = user.id;
+      readNotificationIdsRef.current = loadStoredIds(storageKey);
+    }
+    const isRead = readNotificationIdsRef.current.has(notification.id);
+    const nextNotification = { ...notification, read: isRead };
     setNotifications((current) => [nextNotification, ...current.filter((item) => item.id !== notification.id)].slice(0, 30));
+    if (isRead) return;
     setLiveToast(nextNotification);
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
     toastTimerRef.current = window.setTimeout(() => setLiveToast(null), 6500);
     playPartnerNotificationSound(notification.kind);
-  }, []);
+  }, [user?.id]);
+
+  const markAllNotificationsRead = useCallback(() => {
+    if (!user?.id) return;
+    const storageKey = `aura:partner-read-notifications:${user.id}`;
+    if (readNotificationAccountIdRef.current !== user.id || !readNotificationIdsRef.current) {
+      readNotificationAccountIdRef.current = user.id;
+      readNotificationIdsRef.current = loadStoredIds(storageKey);
+    }
+    setNotifications((current) => {
+      current.forEach((notification) => readNotificationIdsRef.current?.add(notification.id));
+      persistStoredIds(storageKey, readNotificationIdsRef.current);
+      return current.map((notification) => ({ ...notification, read: true }));
+    });
+  }, [user?.id]);
 
   const handleRealtimeEvent = useCallback(
     (target: RealtimeTarget, event: ConsultingServerSocketEvent) => {
@@ -141,8 +173,11 @@ export function PartnerLayout() {
       }
 
       if (event.type === "booking.status") {
+        const eventKey = `status:${target.bookingId}:${event.status}`;
+        if (seenRealtimeEventsRef.current.has(eventKey)) return;
+        seenRealtimeEventsRef.current.add(eventKey);
         pushNotification({
-          id: `status:${target.bookingId}:${event.status}:${Date.now()}`,
+          id: eventKey,
           bookingId: target.bookingId,
           createdAt: new Date().toISOString(),
           description: event.message,
@@ -154,8 +189,11 @@ export function PartnerLayout() {
       }
 
       if (event.type === "call.status") {
+        const eventKey = `call:${target.bookingId}:${event.callSessionId ?? "meeting"}:${event.status}`;
+        if (seenRealtimeEventsRef.current.has(eventKey)) return;
+        seenRealtimeEventsRef.current.add(eventKey);
         pushNotification({
-          id: `call:${target.bookingId}:${event.status}:${Date.now()}`,
+          id: eventKey,
           bookingId: target.bookingId,
           createdAt: new Date().toISOString(),
           description: event.message,
@@ -194,25 +232,30 @@ export function PartnerLayout() {
   }, [queryClient, user?.businessId, user?.expertId]);
 
   useEffect(() => {
-    if (!unreadChatQuery.isSuccess) return;
-    const currentIds = new Set((unreadChatQuery.data ?? []).map((item) => item.booking?.id).filter(Boolean) as string[]);
-    const previousIds = previousBookingIdsRef.current;
-    previousBookingIdsRef.current = currentIds;
-    if (!previousIds) return;
+    if (!bookingNotificationsQuery.isSuccess || !user) return;
+    const storageKey = `aura:partner-booking-notifications:${user.id}`;
+    if (seenBookingNotificationAccountIdRef.current !== user.id || !seenBookingNotificationIdsRef.current) {
+      seenBookingNotificationAccountIdRef.current = user.id;
+      seenBookingNotificationIdsRef.current = loadStoredIds(storageKey);
+    }
+    const seenIds = seenBookingNotificationIdsRef.current ?? new Set<string>();
+    seenBookingNotificationIdsRef.current = seenIds;
 
-    for (const item of unreadChatQuery.data ?? []) {
-      if (!item.booking || previousIds.has(item.booking.id)) continue;
+    for (const booking of [...(bookingNotificationsQuery.data ?? [])].reverse()) {
+      if (!isNewBookingNotificationStatus(booking.status) || seenIds.has(booking.id)) continue;
+      seenIds.add(booking.id);
       pushNotification({
-        id: `booking-created:${item.booking.id}`,
-        bookingId: item.booking.id,
-        createdAt: item.booking.requestedAt,
-        description: `${item.booking.type} · ${formatTime(item.booking.startsAt)}`,
+        id: `booking-created:${booking.id}`,
+        bookingId: booking.id,
+        createdAt: booking.requestedAt,
+        description: `${booking.type} · ${formatTime(booking.startsAt)}`,
         kind: "booking",
-        title: `${item.customer.name} 고객의 새 예약 신청`,
+        title: `${booking.customerName || "고객"} 고객의 새 예약 신청`,
       });
       invalidateBookingQueries(queryClient);
     }
-  }, [pushNotification, queryClient, unreadChatQuery.data, unreadChatQuery.isSuccess]);
+    persistStoredIds(storageKey, seenIds);
+  }, [bookingNotificationsQuery.data, bookingNotificationsQuery.isSuccess, pushNotification, queryClient, user]);
 
   useEffect(() => {
     if (!user) return undefined;
@@ -298,7 +341,7 @@ export function PartnerLayout() {
                 icon={<Bell size={17} />}
                 onClick={() => {
                   setNotificationOpen((current) => !current);
-                  setNotifications((current) => current.map((item) => ({ ...item, read: true })));
+                  markAllNotificationsRead();
                 }}
               >
                 알림
@@ -412,6 +455,28 @@ function mapRealtimeMessage(event: ConsultingRealtimeMessageEvent, threadId: str
 
 function isClosedBookingStatus(status: BookingStatus) {
   return ["cancelled", "completed", "no_show", "refund_requested"].includes(status);
+}
+
+function isNewBookingNotificationStatus(status: BookingStatus) {
+  return status === "requested" || status === "contacting";
+}
+
+function loadStoredIds(storageKey: string): Set<string> {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]");
+    return new Set(Array.isArray(stored) ? stored.filter((value): value is string => typeof value === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function persistStoredIds(storageKey: string, ids: Set<string> | null) {
+  if (!ids) return;
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(Array.from(ids).slice(-200)));
+  } catch {
+    // Notification delivery still works when browser storage is unavailable.
+  }
 }
 
 function formatBadgeCount(count: number) {
