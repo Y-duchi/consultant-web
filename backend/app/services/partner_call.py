@@ -439,12 +439,13 @@ def _validate_booking_joinable(booking: dict[str, Any], settings: Settings) -> N
 
   starts_at = _parse_datetime(booking.get("starts_at"))
   now = datetime.now(timezone.utc)
-  earliest_at = starts_at - timedelta(minutes=settings.consulting_call_join_early_minutes)
   latest_at = starts_at + timedelta(
     minutes=int(booking.get("duration_minutes") or 30) + settings.consulting_call_join_late_minutes,
   )
-  if now < earliest_at:
-    raise HTTPException(status_code=409, detail=f"예약 시작 {settings.consulting_call_join_early_minutes}분 전부터 입장할 수 있습니다.")
+  if settings.consulting_call_enforce_early_window:
+    earliest_at = starts_at - timedelta(minutes=settings.consulting_call_join_early_minutes)
+    if now < earliest_at:
+      raise HTTPException(status_code=409, detail=f"예약 시작 {settings.consulting_call_join_early_minutes}분 전부터 입장할 수 있습니다.")
   if now > latest_at:
     raise HTTPException(status_code=409, detail="화상상담 입장 가능 시간이 지났습니다.")
 

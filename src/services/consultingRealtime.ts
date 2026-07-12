@@ -150,7 +150,6 @@ export type ConsultingConversationSocketClient = {
     clientMessageId: string;
     mediaIds?: string[];
   }) => boolean;
-  sendCaptionTranslation: (payload: Omit<ConsultingCaptionTranslationEvent, "type">) => boolean;
 };
 
 const INITIAL_RECONNECT_DELAY_MS = 500;
@@ -163,6 +162,14 @@ function getConsultingRealtimeApiBaseUrl() {
 
   const partnerApiBaseUrl = import.meta.env.VITE_PARTNER_API_BASE_URL?.trim();
   if (partnerApiBaseUrl) return normalizeConsultingApiBaseUrl(partnerApiBaseUrl);
+
+  if (
+    typeof window !== "undefined" &&
+    window.location.hostname !== "localhost" &&
+    window.location.hostname !== "127.0.0.1"
+  ) {
+    return `${window.location.origin}/api/consulting`;
+  }
 
   return normalizeConsultingApiBaseUrl(import.meta.env.VITE_API_BASE_URL?.trim() || "http://127.0.0.1:8000");
 }
@@ -311,7 +318,6 @@ export function connectConsultingConversationSocket({
       connect();
     },
     send,
-    sendCaptionTranslation: (payload) => send({ ...payload, type: "caption.translation" }),
     sendMessage: (payload) => send({ ...payload, type: "message.send" }),
   };
 }

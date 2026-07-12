@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
+    "deploy:staging": "vercel deploy --prod --yes --local-config vercel.staging.json --build-env VITE_CONSULTING_API_BASE_URL=https://d3t1pbvtir1lj.cloudfront.net/staging/api/consulting",
     "preview": "vite preview --host 127.0.0.1",
     "typecheck": "tsc -b"
   },

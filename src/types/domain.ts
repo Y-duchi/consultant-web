@@ -241,6 +241,7 @@ export interface ConsultingCallState {
   endedAt?: string | null;
   chimeEnabled: boolean;
   transcription: ConsultingCallTranscription;
+  summaryStatus?: "succeeded" | "failed" | null;
 }
 
 export interface ConsultingCallJoinResult {
