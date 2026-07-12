@@ -1,0 +1,24 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/admin/:path*",
+      "destination": "https://d3t1pbvtir1lj.cloudfront.net/staging/api/admin/:path*"
+    },
+    {
+      "source": "/api/partner-applications",
+      "destination": "https://d3t1pbvtir1lj.cloudfront.net/staging/api/partner-applications"
+    },
+    {
+      "source": "/api/partner-applications/:path*",
+      "destination": "https://d3t1pbvtir1lj.cloudfront.net/staging/api/partner-applications/:path*"
+    },
+    {
+      "source": "/api/consulting/partner/:path*",
+      "destination": "https://d3t1pbvtir1lj.cloudfront.net/staging/api/consulting/partner/:path*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
