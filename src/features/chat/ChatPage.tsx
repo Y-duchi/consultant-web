@@ -169,7 +169,7 @@ export function ChatPage() {
     queryKey: ["chat-thread-detail", activeThreadId, user?.id, user?.businessId],
     queryFn: () => getChatThreadDetail(activeThreadId!, user ?? undefined),
     enabled: Boolean(activeThreadId),
-    refetchInterval: socketStatus === "connected" ? false : 2_000,
+    refetchInterval: socketStatus === "connected" ? 5_000 : 2_000,
     refetchIntervalInBackground: true,
   });
 
@@ -188,6 +188,10 @@ export function ChatPage() {
     setPendingAttachments([]);
     setSelectedReportId(null);
   }, [detail?.thread.id]);
+  useEffect(() => {
+    if (!detail?.messages) return;
+    setLiveMessages((current) => mergeHistoryMessages(current, detail.messages));
+  }, [detail?.messages]);
 
   useEffect(() => {
     if (!composeTemplate || !detail?.booking?.id || detail.booking.id !== requestedBookingId) return;
