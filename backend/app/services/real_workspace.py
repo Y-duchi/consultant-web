@@ -1745,7 +1745,7 @@ async def list_experts(principal: PartnerPrincipal | None = None) -> list[dict[s
              e.business_registration_number, e.business_owner_name, e.business_description,
              e.phone, e.business_address,
              coalesce((
-               select array_agg(c.label order by c.label)
+               select array_agg(c.title order by c.title)
                from consulting_expert_categories ec
                join consulting_categories c on c.id = ec.category_id
                where ec.expert_id = e.id

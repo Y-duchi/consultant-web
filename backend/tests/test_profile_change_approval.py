@@ -187,3 +187,39 @@ async def test_approval_applies_requested_fields(monkeypatch: pytest.MonkeyPatch
   profile_updates = [call for call in connection.execute_calls if "update consulting_experts set" in call[0].lower()]
   assert len(profile_updates) == 1
   assert "새 스튜디오" in profile_updates[0][1][1]
+
+
+@pytest.mark.asyncio
+async def test_category_queries_match_production_title_column(monkeypatch: pytest.MonkeyPatch) -> None:
+  class CategoryQueryConnection:
+    def __init__(self):
+      self.queries: list[str] = []
+
+    async def fetch(self, query: str, *args):
+      self.queries.append(query)
+      return []
+
+    async def fetchrow(self, query: str, *args):
+      self.queries.append(query)
+      return expert_context()
+
+    async def close(self):
+      return None
+
+  connection = CategoryQueryConnection()
+
+  async def connect():
+    return connection
+
+  async def ensure_columns(_connection):
+    return None
+
+  monkeypatch.setattr(profile_changes.real_workspace, "_connect", connect)
+  monkeypatch.setattr(profile_changes.real_workspace, "_ensure_partner_profile_columns", ensure_columns)
+
+  await profile_changes.real_workspace.list_experts()
+  await profile_changes._profile_context(connection, ACCOUNT_ID, EXPERT_ID)
+
+  category_queries = "\n".join(connection.queries)
+  assert "c.title" in category_queries
+  assert "c.label" not in category_queries
