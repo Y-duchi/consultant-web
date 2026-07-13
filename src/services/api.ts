@@ -33,11 +33,7 @@ import type {
   PartnerType,
   ConsultingMode,
   ConsultingCallJoinResult,
-  ConsultingCallLanguageCode,
   ConsultingCallState,
-  ConsultingCallTranscription,
-  ConsultingCallTranscriptionMode,
-  ConsultingCallTranscriptionStatus,
 } from "../types/domain";
 import { isBookingVisibleInChat } from "./chatVisibility";
 
@@ -1378,36 +1374,6 @@ export async function createPhoneAction(request: PhoneActionRequest): Promise<{ 
   });
 }
 
-function normalizeCallLanguageCode(value: unknown): ConsultingCallLanguageCode | null {
-  return value === "ko-KR" || value === "en-US" ? value : null;
-}
-
-function normalizeCallTranscriptionStatus(value: unknown): ConsultingCallTranscriptionStatus {
-  return value === "stopped" ||
-    value === "starting" ||
-    value === "active" ||
-    value === "stopping" ||
-    value === "failed"
-    ? value
-    : "disabled";
-}
-
-function normalizeCallTranscriptionMode(value: unknown): ConsultingCallTranscriptionMode {
-  return value === "identify" ? "identify" : "fixed";
-}
-
-function normalizeCallTranscription(value: unknown): ConsultingCallTranscription {
-  const raw = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-  return {
-    enabled: Boolean(raw.enabled),
-    status: normalizeCallTranscriptionStatus(raw.status),
-    mode: normalizeCallTranscriptionMode(raw.mode),
-    languageCode: normalizeCallLanguageCode(raw.languageCode),
-    customerLanguageCode: normalizeCallLanguageCode(raw.customerLanguageCode),
-    expertLanguageCode: normalizeCallLanguageCode(raw.expertLanguageCode),
-  };
-}
-
 function normalizeCallState(value: unknown, bookingId: string): ConsultingCallState {
   const raw = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
   const rawStatus = raw.status;
@@ -1427,7 +1393,6 @@ function normalizeCallState(value: unknown, bookingId: string): ConsultingCallSt
     startedAt: raw.startedAt ? String(raw.startedAt) : null,
     endedAt: raw.endedAt ? String(raw.endedAt) : null,
     chimeEnabled: Boolean(raw.chimeEnabled),
-    transcription: normalizeCallTranscription(raw.transcription),
     summaryStatus: raw.summaryStatus === "succeeded" || raw.summaryStatus === "failed" ? raw.summaryStatus : null,
   };
 }
@@ -1437,26 +1402,16 @@ function normalizeCallJoinResult(value: unknown, bookingId: string): ConsultingC
   const participant = raw.participant && typeof raw.participant === "object"
     ? (raw.participant as Record<string, unknown>)
     : {};
-  const supportedLanguageCodes = Array.isArray(raw.supportedLanguageCodes)
-    ? raw.supportedLanguageCodes.map(normalizeCallLanguageCode).filter((value): value is ConsultingCallLanguageCode => Boolean(value))
-    : [];
-  const transcription = normalizeCallTranscription(raw.transcription);
   return {
     callSessionId: String(raw.callSessionId ?? ""),
     bookingId: String(raw.bookingId ?? bookingId),
     participantType: raw.participantType === "user" || raw.participantType === "expert" ? raw.participantType : undefined,
-    participantLanguageCode: normalizeCallLanguageCode(raw.participantLanguageCode) ?? undefined,
-    supportedLanguageCodes: supportedLanguageCodes.length ? supportedLanguageCodes : undefined,
     participant: {
       id: String(participant.id ?? ""),
       type: participant.type === "customer" ? "customer" : "partner",
-      languageCode: normalizeCallLanguageCode(participant.languageCode) ?? "ko-KR",
     },
     meeting: raw.meeting && typeof raw.meeting === "object" ? (raw.meeting as Record<string, unknown>) : {},
     attendee: raw.attendee && typeof raw.attendee === "object" ? (raw.attendee as Record<string, unknown>) : {},
-    transcription,
-    transcriptionStatus: normalizeCallTranscriptionStatus(raw.transcriptionStatus ?? transcription.status),
-    transcriptionMode: normalizeCallTranscriptionMode(raw.transcriptionMode ?? transcription.mode),
   };
 }
 
@@ -1472,7 +1427,6 @@ export async function getBookingCallState(bookingId: string, user?: AuthUser): P
 
 export async function joinBookingCall(
   bookingId: string,
-  languageCode: ConsultingCallLanguageCode = "ko-KR",
   user?: AuthUser,
 ): Promise<ConsultingCallJoinResult> {
   if (shouldUsePartnerApi(user)) {
@@ -1480,7 +1434,6 @@ export async function joinBookingCall(
       `/bookings/${encodeURIComponent(bookingId)}/call/join`,
       {
         method: "POST",
-        body: JSON.stringify({ languageCode }),
       },
     );
     return normalizeCallJoinResult(data.call, bookingId);
@@ -1493,58 +1446,17 @@ export async function joinBookingCall(
 export async function endBookingCall(
   bookingId: string,
   user?: AuthUser,
-  transcript?: string,
 ): Promise<ConsultingCallState> {
   if (shouldUsePartnerApi(user)) {
     const data = await requestPartnerJson<{ call: unknown }>(
       `/bookings/${encodeURIComponent(bookingId)}/call/end`,
-      {
-        method: "POST",
-        body: JSON.stringify({ transcript: transcript?.trim() || undefined }),
-      },
-    );
-    return normalizeCallState(data.call, bookingId);
-  }
-  await delay(120);
-  findBooking(bookingId, user);
-  return normalizeCallState({ bookingId, chimeEnabled: false, status: "ended" }, bookingId);
-}
-
-export async function startBookingCallTranscription(
-  bookingId: string,
-  languageCode: ConsultingCallLanguageCode = "ko-KR",
-  user?: AuthUser,
-  transcriptionConsentAccepted = false,
-): Promise<ConsultingCallState> {
-  if (shouldUsePartnerApi(user)) {
-    const data = await requestPartnerJson<{ call: unknown }>(
-      `/bookings/${encodeURIComponent(bookingId)}/call/transcription/start`,
-      {
-        method: "POST",
-        body: JSON.stringify({ languageCode, transcriptionConsentAccepted }),
-      },
-    );
-    return normalizeCallState(data.call, bookingId);
-  }
-  if (!transcriptionConsentAccepted) {
-    throw new Error("실시간 자막을 시작하려면 고객과 상담사의 음성 인식 동의 확인이 필요합니다.");
-  }
-  await delay(120);
-  findBooking(bookingId, user);
-  return normalizeCallState({ bookingId, chimeEnabled: false, status: "not_started" }, bookingId);
-}
-
-export async function stopBookingCallTranscription(bookingId: string, user?: AuthUser): Promise<ConsultingCallState> {
-  if (shouldUsePartnerApi(user)) {
-    const data = await requestPartnerJson<{ call: unknown }>(
-      `/bookings/${encodeURIComponent(bookingId)}/call/transcription/stop`,
       { method: "POST" },
     );
     return normalizeCallState(data.call, bookingId);
   }
   await delay(120);
   findBooking(bookingId, user);
-  return normalizeCallState({ bookingId, chimeEnabled: false, status: "not_started" }, bookingId);
+  return normalizeCallState({ bookingId, chimeEnabled: false, status: "ended" }, bookingId);
 }
 
 export async function getSharedReports(customerId?: string, user?: AuthUser): Promise<SharedReport[]> {

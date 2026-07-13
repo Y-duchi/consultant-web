@@ -1723,34 +1723,6 @@ a {
   font-weight: 800;
 }
 
-.chat-call-captions {
-  position: absolute;
-  right: 18px;
-  bottom: 18px;
-  left: 18px;
-  display: grid;
-  gap: 6px;
-  z-index: 3;
-  pointer-events: none;
-}
-
-.chat-call-caption {
-  display: grid;
-  gap: 4px;
-  width: min(680px, calc(100% - 250px));
-  padding: 9px 12px;
-  border: 1px solid rgb(255 255 255 / 16%);
-  border-radius: 7px;
-  background: rgb(0 0 0 / 74%);
-  color: #fff;
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.chat-call-caption span {
-  color: #b8e2d9;
-}
-
 .chat-call-reports {
   display: grid;
   align-content: start;
@@ -1847,9 +1819,6 @@ a {
     border-left: 0;
   }
 
-  .chat-call-caption {
-    width: calc(100% - 110px);
-  }
 }
 
 .workflow-call-video {
@@ -1911,56 +1880,6 @@ a {
   bottom: 6px;
   max-width: none;
   text-align: center;
-}
-
-.workflow-call-captions {
-  position: absolute;
-  left: 10px;
-  right: calc(34% + 22px);
-  bottom: 10px;
-  display: grid;
-  gap: 6px;
-  pointer-events: none;
-}
-
-.workflow-call-caption {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  padding: 7px 9px;
-  border-radius: 8px;
-  background: rgb(0 0 0 / 68%);
-  color: #fff;
-  box-shadow: 0 10px 22px rgb(0 0 0 / 18%);
-}
-
-.workflow-call-caption span {
-  position: static;
-  max-width: none;
-  padding: 0;
-  border-radius: 0;
-  background: transparent;
-  color: rgb(255 255 255 / 72%);
-  font-size: 10px;
-}
-
-.workflow-call-caption strong {
-  color: #fff;
-  font-size: 12px;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-}
-
-.workflow-call-caption em {
-  color: #d7f7e8;
-  font-size: 11px;
-  font-style: normal;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-}
-
-.workflow-call-caption.is-partial {
-  opacity: 0.72;
 }
 
 .workflow-call-controls {
