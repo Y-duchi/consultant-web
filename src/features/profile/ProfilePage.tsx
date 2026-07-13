@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Save } from "lucide-react";
-import { getBusinessProfile, getExperts, updateBusinessProfile, updateExpertProfile } from "../../services/api";
+import { ImagePlus, Save } from "lucide-react";
+import { getBusinessProfile, getExperts, updateBusinessProfile, updateExpertProfile, uploadExpertAvatar } from "../../services/api";
 import { useAuth } from "../auth/AuthContext";
 import { BusinessVerificationBadge, ExposureStatusBadge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
@@ -19,6 +19,9 @@ export function ProfilePage() {
   const [businessDraft, setBusinessDraft] = useState<Partial<BusinessProfile>>({});
   const [selectedExpertId, setSelectedExpertId] = useState("");
   const [expertDraft, setExpertDraft] = useState<Partial<Expert>>({});
+  const [avatarFeedback, setAvatarFeedback] = useState<string | null>(null);
+  const [avatarPreviewUrl, setAvatarPreviewUrl] = useState<string | null>(null);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (businessQuery.data) setBusinessDraft(businessQuery.data);
@@ -36,6 +39,12 @@ export function ProfilePage() {
     if (selectedExpert) setExpertDraft(selectedExpert);
   }, [selectedExpert]);
 
+  useEffect(() => {
+    return () => {
+      if (avatarPreviewUrl) URL.revokeObjectURL(avatarPreviewUrl);
+    };
+  }, [avatarPreviewUrl]);
+
   const businessMutation = useMutation({
     mutationFn: () => updateBusinessProfile(businessDraft, user ?? undefined),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["business-profile"] }),
@@ -43,6 +52,19 @@ export function ProfilePage() {
   const expertMutation = useMutation({
     mutationFn: () => updateExpertProfile(selectedExpertId, expertDraft, user ?? undefined),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["experts"] }),
+  });
+  const avatarMutation = useMutation({
+    mutationFn: (file: File) => uploadExpertAvatar(selectedExpertId, file, user ?? undefined),
+    onSuccess: (expert) => {
+      setAvatarPreviewUrl(null);
+      setExpertDraft(expert);
+      setAvatarFeedback("프로필 사진이 변경되었습니다.");
+      queryClient.invalidateQueries({ queryKey: ["experts"] });
+    },
+    onError: (error) => {
+      setAvatarPreviewUrl(null);
+      setAvatarFeedback(error instanceof Error ? error.message : "프로필 사진을 변경하지 못했습니다.");
+    },
   });
   if (businessQuery.isLoading || expertsQuery.isLoading) return <LoadingState label="업체와 전문가 정보를 불러오는 중입니다" />;
   if (businessQuery.isError) return <ErrorState message={businessQuery.error.message} onRetry={() => businessQuery.refetch()} />;
@@ -144,7 +166,33 @@ export function ProfilePage() {
             {selectedExpert ? (
               <>
                 <div className="expert-card">
-                  <img className="profile-photo large" src={selectedExpert.avatarUrl} alt="" />
+                  <div className="profile-photo-editor">
+                    <img className="profile-photo large" src={avatarPreviewUrl || expertDraft.avatarUrl || selectedExpert.avatarUrl} alt={`${selectedExpert.name} 프로필`} />
+                    <input
+                      ref={avatarInputRef}
+                      className="profile-photo-input"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        event.target.value = "";
+                        if (!file) return;
+                        setAvatarFeedback(null);
+                        setAvatarPreviewUrl(URL.createObjectURL(file));
+                        avatarMutation.mutate(file);
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      icon={<ImagePlus size={15} />}
+                      disabled={avatarMutation.isPending}
+                      onClick={() => avatarInputRef.current?.click()}
+                    >
+                      {avatarMutation.isPending ? "변경 중" : "사진 변경"}
+                    </Button>
+                    <small>JPG, PNG, WebP · 최대 10MB</small>
+                  </div>
                   <div className="cell-main">
                     <strong>{selectedExpert.name}</strong>
                     <span>{selectedExpert.roleLabel}</span>
@@ -157,6 +205,11 @@ export function ProfilePage() {
                     </div>
                   </div>
                 </div>
+                {avatarFeedback ? (
+                  <p className={`profile-upload-feedback ${avatarMutation.isError ? "is-error" : ""}`} role="status">
+                    {avatarFeedback}
+                  </p>
+                ) : null}
                 <div className="form-grid">
                   <Field label="이름">
                     <TextInput value={expertDraft.name ?? ""} onChange={(event) => setExpertDraft((prev) => ({ ...prev, name: event.target.value }))} />

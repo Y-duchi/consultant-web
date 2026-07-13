@@ -1873,6 +1873,67 @@ export async function updateExpertProfile(expertId: string, patch: Partial<Exper
   return clone(expert);
 }
 
+const PROFILE_AVATAR_MAX_BYTES = 10 * 1024 * 1024;
+const PROFILE_AVATAR_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+export async function uploadExpertAvatar(expertId: string, file: File, user?: AuthUser): Promise<Expert> {
+  if (!PROFILE_AVATAR_CONTENT_TYPES.has(file.type)) {
+    throw new Error("JPG, PNG 또는 WebP 형식의 사진을 선택해 주세요.");
+  }
+  if (file.size <= 0 || file.size > PROFILE_AVATAR_MAX_BYTES) {
+    throw new Error("10MB 이하의 사진을 선택해 주세요.");
+  }
+
+  if (shouldUsePartnerApi(user)) {
+    const { upload } = await requestPartnerJson<{ upload: PartnerUpload }>(
+      "/media/presigned-upload",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          byteSize: file.size,
+          contentType: file.type,
+          mediaKind: "profile-avatar",
+          originalFilename: file.name || "profile-image",
+          source: "gallery",
+        }),
+      },
+    );
+    const uploadResponse = await fetch(upload.uploadUrl, {
+      method: upload.method || "PUT",
+      headers: {
+        "Content-Type": file.type,
+        ...(upload.cacheControl ? { "Cache-Control": upload.cacheControl } : {}),
+      },
+      body: file,
+    });
+    if (!uploadResponse.ok) {
+      throw new Error("프로필 사진 업로드에 실패했습니다. 다시 시도해 주세요.");
+    }
+
+    const { media } = await requestPartnerJson<{ media: PartnerMedia }>(
+      "/media/complete-upload",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          bucket: upload.bucket,
+          objectKey: upload.objectKey,
+        }),
+      },
+    );
+    const { expert } = await requestPartnerJson<{ expert: Expert }>(
+      `/experts/${encodeURIComponent(expertId)}/avatar`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ mediaId: media.id }),
+      },
+    );
+    rememberExperts([expert]);
+    return clone(expert);
+  }
+
+  return updateExpertProfile(expertId, { avatarUrl: URL.createObjectURL(file) }, user);
+}
+
 export async function uploadCredentialMock(ownerId: string, fileName: string): Promise<Attachment> {
   await delay(260);
   const attachment: Attachment = {

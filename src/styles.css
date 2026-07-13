@@ -2264,6 +2264,50 @@ a {
   border-radius: 8px;
 }
 
+.profile-photo-editor {
+  align-items: stretch;
+  display: grid;
+  gap: 7px;
+  justify-items: center;
+  width: 112px;
+}
+
+.profile-photo-editor .profile-photo.large {
+  height: 96px;
+  width: 96px;
+}
+
+.profile-photo-editor .button {
+  width: 100%;
+}
+
+.profile-photo-editor small {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.profile-photo-input {
+  display: none;
+}
+
+.profile-upload-feedback {
+  background: #edf9f5;
+  border: 1px solid #a9decf;
+  border-radius: 7px;
+  color: #176c5d;
+  font-size: 12px;
+  margin: 0;
+  padding: 9px 11px;
+}
+
+.profile-upload-feedback.is-error {
+  background: #fff2f0;
+  border-color: #f3b3ac;
+  color: #b63328;
+}
+
 .profile-cover {
   width: 100%;
   height: 190px;
