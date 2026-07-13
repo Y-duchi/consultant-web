@@ -206,7 +206,12 @@ export function ProfilePage() {
               <>
                 <div className="expert-card">
                   <div className="profile-photo-editor">
-                    <img className="profile-photo large" src={avatarPreviewUrl || expertDraft.avatarUrl || selectedExpert.avatarUrl} alt={`${selectedExpert.name} 프로필`} />
+                    <ExpertProfilePhoto
+                      src={avatarPreviewUrl || expertDraft.avatarUrl || selectedExpert.avatarUrl}
+                      name={expertDraft.name || selectedExpert.name}
+                      initials={selectedExpert.initials}
+                      tone={selectedExpert.avatarTone}
+                    />
                     <input
                       ref={avatarInputRef}
                       className="profile-photo-input"
@@ -270,6 +275,44 @@ export function ProfilePage() {
 
 function latestRequest(requests: ProfileChangeRequest[] | undefined, expertId: string, targetType: ProfileChangeTarget) {
   return requests?.find((request) => request.expertId === expertId && request.targetType === targetType);
+}
+
+function ExpertProfilePhoto({
+  src,
+  name,
+  initials,
+  tone,
+}: {
+  src?: string | null;
+  name: string;
+  initials?: string;
+  tone?: string;
+}) {
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const normalizedSrc = src?.trim() || "";
+  const normalizedTone = tone === "sand" || tone === "mauve" ? tone : "rose";
+  const fallbackInitials = initials?.trim() || name.replace(/\s/g, "").slice(-2) || "A";
+
+  if (normalizedSrc && failedSrc !== normalizedSrc) {
+    return (
+      <img
+        className="profile-photo large"
+        src={normalizedSrc}
+        alt={`${name} 프로필`}
+        onError={() => setFailedSrc(normalizedSrc)}
+      />
+    );
+  }
+
+  return (
+    <div
+      className={`profile-photo large profile-photo-fallback is-${normalizedTone}`}
+      role="img"
+      aria-label={`${name} 기본 프로필`}
+    >
+      {fallbackInitials}
+    </div>
+  );
 }
 
 function ProfileRequestNotice({ request }: { request?: ProfileChangeRequest }) {

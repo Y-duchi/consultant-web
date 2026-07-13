@@ -2742,6 +2742,8 @@ def _expert_from_row(row: asyncpg.Record) -> dict[str, Any]:
     "email": "",
     "phone": row.get("phone") or "",
     "avatar_url": row["image_url"] or "",
+    "initials": row["initials"] or ("".join(str(row["name"]).split())[-2:] or "A"),
+    "avatar_tone": row["avatar_tone"] or "rose",
     "specialties": tags,
     "categories": [str(item) for item in _list(row.get("category_labels"))],
     "introduction": row["intro"] or "",
