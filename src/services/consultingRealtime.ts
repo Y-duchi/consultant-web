@@ -160,7 +160,8 @@ export type ConsultingConversationSocketClient = {
 
 const INITIAL_RECONNECT_DELAY_MS = 500;
 const MAX_RECONNECT_DELAY_MS = 5000;
-const MAX_RECONNECT_ATTEMPTS = 7;
+const HEARTBEAT_INTERVAL_MS = 25_000;
+const HEARTBEAT_TIMEOUT_MS = 10_000;
 const DEPLOYED_CONSULTING_API_BASE_URL = "https://d3t1pbvtir1lj.cloudfront.net/api/consulting";
 
 function getConsultingRealtimeApiBaseUrl() {
@@ -242,6 +243,8 @@ export function connectConsultingConversationSocket({
 }: ConnectOptions): ConsultingConversationSocketClient {
   let socket: WebSocket | null = null;
   let reconnectTimer: number | null = null;
+  let heartbeatTimer: number | null = null;
+  let heartbeatTimeout: number | null = null;
   let reconnectAttempt = 0;
   let closedByClient = false;
 
@@ -253,13 +256,39 @@ export function connectConsultingConversationSocket({
     }
   };
 
+  const clearHeartbeat = () => {
+    if (heartbeatTimer) {
+      window.clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+    if (heartbeatTimeout) {
+      window.clearTimeout(heartbeatTimeout);
+      heartbeatTimeout = null;
+    }
+  };
+
+  const sendHeartbeat = () => {
+    const currentSocket = socket;
+    if (!currentSocket || currentSocket.readyState !== WebSocket.OPEN) return;
+
+    currentSocket.send(JSON.stringify({ at: new Date().toISOString(), type: "ping" }));
+    if (heartbeatTimeout) window.clearTimeout(heartbeatTimeout);
+    heartbeatTimeout = window.setTimeout(() => {
+      if (socket === currentSocket && currentSocket.readyState === WebSocket.OPEN) {
+        currentSocket.close();
+      }
+    }, HEARTBEAT_TIMEOUT_MS);
+  };
+
+  const startHeartbeat = () => {
+    clearHeartbeat();
+    sendHeartbeat();
+    heartbeatTimer = window.setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
+  };
+
   const scheduleReconnect = () => {
     clearReconnectTimer();
     reconnectAttempt += 1;
-    if (reconnectAttempt > MAX_RECONNECT_ATTEMPTS) {
-      setStatus("offline");
-      return;
-    }
     setStatus("reconnecting");
     const delay = Math.min(INITIAL_RECONNECT_DELAY_MS * 2 ** Math.max(0, reconnectAttempt - 1), MAX_RECONNECT_DELAY_MS);
     reconnectTimer = window.setTimeout(connect, delay);
@@ -268,26 +297,37 @@ export function connectConsultingConversationSocket({
   const connect = () => {
     clearReconnectTimer();
     setStatus(reconnectAttempt === 0 ? "connecting" : "reconnecting");
+    let nextSocket: WebSocket;
     try {
-      socket = new WebSocket(buildConsultingWebSocketUrl({ authToken, bookingId, participantType }));
+      nextSocket = new WebSocket(buildConsultingWebSocketUrl({ authToken, bookingId, participantType }));
+      socket = nextSocket;
     } catch {
       scheduleReconnect();
       return;
     }
 
-    socket.onopen = () => {
+    nextSocket.onopen = () => {
+      if (socket !== nextSocket) return;
       reconnectAttempt = 0;
       setStatus("connected");
+      startHeartbeat();
     };
-    socket.onmessage = (event) => {
+    nextSocket.onmessage = (event) => {
+      if (socket !== nextSocket) return;
       const parsed = parseSocketEvent(event.data);
+      if (parsed?.type === "pong" && heartbeatTimeout) {
+        window.clearTimeout(heartbeatTimeout);
+        heartbeatTimeout = null;
+      }
       if (parsed) onEvent(parsed);
     };
-    socket.onerror = () => {
-      if (!closedByClient) setStatus("offline");
+    nextSocket.onerror = () => {
+      if (!closedByClient && socket === nextSocket) setStatus("offline");
     };
-    socket.onclose = () => {
+    nextSocket.onclose = () => {
+      if (socket !== nextSocket) return;
       socket = null;
+      clearHeartbeat();
       if (closedByClient) {
         setStatus("idle");
         return;
@@ -302,28 +342,41 @@ export function connectConsultingConversationSocket({
     return true;
   };
 
+  const reconnect = () => {
+    if (closedByClient) return;
+    reconnectAttempt = 0;
+    clearReconnectTimer();
+    clearHeartbeat();
+    const previousSocket = socket;
+    socket = null;
+    if (previousSocket) {
+      previousSocket.onerror = null;
+      previousSocket.onclose = null;
+      previousSocket.close();
+    }
+    connect();
+  };
+
+  const reconnectWhenVisible = () => {
+    if (document.visibilityState === "visible") reconnect();
+  };
+
   connect();
+  document.addEventListener("visibilitychange", reconnectWhenVisible);
+  window.addEventListener("online", reconnect);
 
   return {
     close: () => {
       closedByClient = true;
       clearReconnectTimer();
+      clearHeartbeat();
+      document.removeEventListener("visibilitychange", reconnectWhenVisible);
+      window.removeEventListener("online", reconnect);
       socket?.close();
       socket = null;
       setStatus("idle");
     },
-    reconnect: () => {
-      if (closedByClient) return;
-      reconnectAttempt = 0;
-      clearReconnectTimer();
-      if (socket) {
-        socket.onerror = null;
-        socket.onclose = null;
-        socket.close();
-      }
-      socket = null;
-      connect();
-    },
+    reconnect,
     send,
     sendMessage: (payload) => send({ ...payload, type: "message.send" }),
   };
