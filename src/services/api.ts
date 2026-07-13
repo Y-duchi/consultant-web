@@ -32,13 +32,8 @@ import type {
   WorkspaceScope,
   PartnerType,
   ConsultingMode,
-  ConsultingCaptionTranslation,
   ConsultingCallJoinResult,
-  ConsultingCallLanguageCode,
   ConsultingCallState,
-  ConsultingCallTranscription,
-  ConsultingCallTranscriptionMode,
-  ConsultingCallTranscriptionStatus,
 } from "../types/domain";
 import { isBookingVisibleInChat } from "./chatVisibility";
 
@@ -1379,37 +1374,6 @@ export async function createPhoneAction(request: PhoneActionRequest): Promise<{ 
   });
 }
 
-function normalizeCallLanguageCode(value: unknown): ConsultingCallLanguageCode | null {
-  return value === "ko-KR" || value === "en-US" ? value : null;
-}
-
-function normalizeCallTranscriptionStatus(value: unknown): ConsultingCallTranscriptionStatus {
-  return value === "stopped" ||
-    value === "starting" ||
-    value === "active" ||
-    value === "stopping" ||
-    value === "failed"
-    ? value
-    : "disabled";
-}
-
-function normalizeCallTranscriptionMode(value: unknown): ConsultingCallTranscriptionMode {
-  return value === "identify" ? "identify" : "fixed";
-}
-
-function normalizeCallTranscription(value: unknown): ConsultingCallTranscription {
-  const raw = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-  return {
-    enabled: Boolean(raw.enabled),
-    translationEnabled: Boolean(raw.translationEnabled),
-    status: normalizeCallTranscriptionStatus(raw.status),
-    mode: normalizeCallTranscriptionMode(raw.mode),
-    languageCode: normalizeCallLanguageCode(raw.languageCode),
-    customerLanguageCode: normalizeCallLanguageCode(raw.customerLanguageCode),
-    expertLanguageCode: normalizeCallLanguageCode(raw.expertLanguageCode),
-  };
-}
-
 function normalizeCallState(value: unknown, bookingId: string): ConsultingCallState {
   const raw = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
   const rawStatus = raw.status;
@@ -1429,7 +1393,6 @@ function normalizeCallState(value: unknown, bookingId: string): ConsultingCallSt
     startedAt: raw.startedAt ? String(raw.startedAt) : null,
     endedAt: raw.endedAt ? String(raw.endedAt) : null,
     chimeEnabled: Boolean(raw.chimeEnabled),
-    transcription: normalizeCallTranscription(raw.transcription),
     summaryStatus: raw.summaryStatus === "succeeded" || raw.summaryStatus === "failed" ? raw.summaryStatus : null,
   };
 }
@@ -1439,38 +1402,16 @@ function normalizeCallJoinResult(value: unknown, bookingId: string): ConsultingC
   const participant = raw.participant && typeof raw.participant === "object"
     ? (raw.participant as Record<string, unknown>)
     : {};
-  const supportedLanguageCodes = Array.isArray(raw.supportedLanguageCodes)
-    ? raw.supportedLanguageCodes.map(normalizeCallLanguageCode).filter((value): value is ConsultingCallLanguageCode => Boolean(value))
-    : [];
-  const transcription = normalizeCallTranscription(raw.transcription);
   return {
     callSessionId: String(raw.callSessionId ?? ""),
     bookingId: String(raw.bookingId ?? bookingId),
     participantType: raw.participantType === "user" || raw.participantType === "expert" ? raw.participantType : undefined,
-    participantLanguageCode: normalizeCallLanguageCode(raw.participantLanguageCode) ?? undefined,
-    supportedLanguageCodes: supportedLanguageCodes.length ? supportedLanguageCodes : undefined,
     participant: {
       id: String(participant.id ?? ""),
       type: participant.type === "customer" ? "customer" : "partner",
-      languageCode: normalizeCallLanguageCode(participant.languageCode) ?? "ko-KR",
     },
     meeting: raw.meeting && typeof raw.meeting === "object" ? (raw.meeting as Record<string, unknown>) : {},
     attendee: raw.attendee && typeof raw.attendee === "object" ? (raw.attendee as Record<string, unknown>) : {},
-    transcription,
-    transcriptionStatus: normalizeCallTranscriptionStatus(raw.transcriptionStatus ?? transcription.status),
-    transcriptionMode: normalizeCallTranscriptionMode(raw.transcriptionMode ?? transcription.mode),
-  };
-}
-
-function normalizeCaptionTranslation(value: unknown): ConsultingCaptionTranslation {
-  const raw = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-  const sourceLanguageCode = normalizeCallLanguageCode(raw.sourceLanguageCode);
-  const targetLanguageCode = raw.targetLanguageCode === "en" ? "en" : "ko";
-  return {
-    resultId: String(raw.resultId ?? ""),
-    sourceLanguageCode: sourceLanguageCode ?? "ko-KR",
-    targetLanguageCode,
-    translatedContent: String(raw.translatedContent ?? ""),
   };
 }
 
@@ -1486,7 +1427,6 @@ export async function getBookingCallState(bookingId: string, user?: AuthUser): P
 
 export async function joinBookingCall(
   bookingId: string,
-  languageCode: ConsultingCallLanguageCode = "ko-KR",
   user?: AuthUser,
 ): Promise<ConsultingCallJoinResult> {
   if (shouldUsePartnerApi(user)) {
@@ -1494,7 +1434,6 @@ export async function joinBookingCall(
       `/bookings/${encodeURIComponent(bookingId)}/call/join`,
       {
         method: "POST",
-        body: JSON.stringify({ languageCode }),
       },
     );
     return normalizeCallJoinResult(data.call, bookingId);
@@ -1507,87 +1446,17 @@ export async function joinBookingCall(
 export async function endBookingCall(
   bookingId: string,
   user?: AuthUser,
-  transcript?: string,
 ): Promise<ConsultingCallState> {
   if (shouldUsePartnerApi(user)) {
     const data = await requestPartnerJson<{ call: unknown }>(
       `/bookings/${encodeURIComponent(bookingId)}/call/end`,
-      {
-        method: "POST",
-        body: JSON.stringify({ transcript: transcript?.trim() || undefined }),
-      },
-    );
-    return normalizeCallState(data.call, bookingId);
-  }
-  await delay(120);
-  findBooking(bookingId, user);
-  return normalizeCallState({ bookingId, chimeEnabled: false, status: "ended" }, bookingId);
-}
-
-export async function startBookingCallTranscription(
-  bookingId: string,
-  languageCode: ConsultingCallLanguageCode = "ko-KR",
-  user?: AuthUser,
-  transcriptionConsentAccepted = false,
-): Promise<ConsultingCallState> {
-  if (shouldUsePartnerApi(user)) {
-    const data = await requestPartnerJson<{ call: unknown }>(
-      `/bookings/${encodeURIComponent(bookingId)}/call/transcription/start`,
-      {
-        method: "POST",
-        body: JSON.stringify({ languageCode, transcriptionConsentAccepted }),
-      },
-    );
-    return normalizeCallState(data.call, bookingId);
-  }
-  if (!transcriptionConsentAccepted) {
-    throw new Error("실시간 자막을 시작하려면 고객과 상담사의 음성 인식 동의 확인이 필요합니다.");
-  }
-  await delay(120);
-  findBooking(bookingId, user);
-  return normalizeCallState({ bookingId, chimeEnabled: false, status: "not_started" }, bookingId);
-}
-
-export async function stopBookingCallTranscription(bookingId: string, user?: AuthUser): Promise<ConsultingCallState> {
-  if (shouldUsePartnerApi(user)) {
-    const data = await requestPartnerJson<{ call: unknown }>(
-      `/bookings/${encodeURIComponent(bookingId)}/call/transcription/stop`,
       { method: "POST" },
     );
     return normalizeCallState(data.call, bookingId);
   }
   await delay(120);
   findBooking(bookingId, user);
-  return normalizeCallState({ bookingId, chimeEnabled: false, status: "not_started" }, bookingId);
-}
-
-export async function translateBookingCallCaption(
-  bookingId: string,
-  payload: {
-    resultId: string;
-    sourceLanguageCode: ConsultingCallLanguageCode;
-    content: string;
-  },
-  user?: AuthUser,
-): Promise<ConsultingCaptionTranslation> {
-  if (shouldUsePartnerApi(user)) {
-    const data = await requestPartnerJson<{ resultId?: string; sourceLanguageCode?: ConsultingCallLanguageCode; targetLanguageCode?: "ko" | "en"; translatedContent?: string }>(
-      `/bookings/${encodeURIComponent(bookingId)}/call/captions/translate`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-      },
-    );
-    return normalizeCaptionTranslation(data);
-  }
-  await delay(120);
-  findBooking(bookingId, user);
-  return normalizeCaptionTranslation({
-    resultId: payload.resultId,
-    sourceLanguageCode: payload.sourceLanguageCode,
-    targetLanguageCode: payload.sourceLanguageCode === "ko-KR" ? "en" : "ko",
-    translatedContent: payload.content,
-  });
+  return normalizeCallState({ bookingId, chimeEnabled: false, status: "ended" }, bookingId);
 }
 
 export async function getSharedReports(customerId?: string, user?: AuthUser): Promise<SharedReport[]> {
@@ -1871,6 +1740,67 @@ export async function updateExpertProfile(expertId: string, patch: Partial<Exper
   }
   Object.assign(expert, patch);
   return clone(expert);
+}
+
+const PROFILE_AVATAR_MAX_BYTES = 10 * 1024 * 1024;
+const PROFILE_AVATAR_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+export async function uploadExpertAvatar(expertId: string, file: File, user?: AuthUser): Promise<Expert> {
+  if (!PROFILE_AVATAR_CONTENT_TYPES.has(file.type)) {
+    throw new Error("JPG, PNG 또는 WebP 형식의 사진을 선택해 주세요.");
+  }
+  if (file.size <= 0 || file.size > PROFILE_AVATAR_MAX_BYTES) {
+    throw new Error("10MB 이하의 사진을 선택해 주세요.");
+  }
+
+  if (shouldUsePartnerApi(user)) {
+    const { upload } = await requestPartnerJson<{ upload: PartnerUpload }>(
+      "/media/presigned-upload",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          byteSize: file.size,
+          contentType: file.type,
+          mediaKind: "profile-avatar",
+          originalFilename: file.name || "profile-image",
+          source: "gallery",
+        }),
+      },
+    );
+    const uploadResponse = await fetch(upload.uploadUrl, {
+      method: upload.method || "PUT",
+      headers: {
+        "Content-Type": file.type,
+        ...(upload.cacheControl ? { "Cache-Control": upload.cacheControl } : {}),
+      },
+      body: file,
+    });
+    if (!uploadResponse.ok) {
+      throw new Error("프로필 사진 업로드에 실패했습니다. 다시 시도해 주세요.");
+    }
+
+    const { media } = await requestPartnerJson<{ media: PartnerMedia }>(
+      "/media/complete-upload",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          bucket: upload.bucket,
+          objectKey: upload.objectKey,
+        }),
+      },
+    );
+    const { expert } = await requestPartnerJson<{ expert: Expert }>(
+      `/experts/${encodeURIComponent(expertId)}/avatar`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ mediaId: media.id }),
+      },
+    );
+    rememberExperts([expert]);
+    return clone(expert);
+  }
+
+  return updateExpertProfile(expertId, { avatarUrl: URL.createObjectURL(file) }, user);
 }
 
 export async function uploadCredentialMock(ownerId: string, fileName: string): Promise<Attachment> {

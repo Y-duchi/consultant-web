@@ -6,10 +6,6 @@ import {
   MeetingSessionConfiguration,
   type AudioVideoObserver,
   type MeetingSession,
-  type Transcript,
-  type TranscriptEvent,
-  type TranscriptResult,
-  type TranscriptionStatus,
   type VideoTileState,
 } from "amazon-chime-sdk-js";
 import type { ConsultingCallJoinResult } from "../types/domain";
@@ -32,8 +28,6 @@ export type ChimeMeetingClient = {
 export type ChimeMeetingClientOptions = {
   onError?: (message: string) => void;
   onStatusChange?: (status: ChimeMeetingStatus) => void;
-  onTranscriptResults?: (results: WebChimeTranscriptResult[]) => void;
-  onTranscriptionStatus?: (status: WebChimeTranscriptionStatus) => void;
 };
 
 export type ChimeMeetingElements = {
@@ -45,25 +39,8 @@ export type ChimeMeetingElements = {
 type WebChimeMeetingElements = {
   audioElement: HTMLAudioElement;
   localVideoElement: HTMLVideoElement | null;
-  onTranscriptResults?: (results: WebChimeTranscriptResult[]) => void;
-  onTranscriptionStatus?: (status: WebChimeTranscriptionStatus) => void;
   remoteVideoElement: HTMLVideoElement | null;
   onStatusChange?: (message: string) => void;
-};
-
-export type WebChimeTranscriptResult = {
-  resultId: string;
-  isPartial: boolean;
-  languageCode?: string;
-  speakerAttendeeId?: string;
-  speakerExternalUserId?: string;
-  transcript: string;
-};
-
-export type WebChimeTranscriptionStatus = {
-  message?: string;
-  transcriptionRegion?: string;
-  type: string;
 };
 
 export function createChimeMeetingClient(
@@ -85,8 +62,6 @@ export function createChimeMeetingClient(
         controller = await startWebChimeMeeting(joinResult, {
           ...elements,
           onStatusChange: () => options.onStatusChange?.("connected"),
-          onTranscriptResults: options.onTranscriptResults,
-          onTranscriptionStatus: options.onTranscriptionStatus,
         });
         options.onStatusChange?.("connected");
       } catch (error) {
@@ -117,7 +92,6 @@ export async function startWebChimeMeeting(
   );
   const meetingSession: MeetingSession = new DefaultMeetingSession(configuration, logger, deviceController);
   const audioVideo = meetingSession.audioVideo;
-  let transcriptEventCallback: ((transcriptEvent: TranscriptEvent) => void) | null = null;
 
   audioVideo.chooseVideoInputQuality(1280, 720, 30);
   audioVideo.setVideoMaxBandwidthKbps(2500);
@@ -137,26 +111,6 @@ export async function startWebChimeMeeting(
   };
 
   audioVideo.addObserver(observer);
-  if (elements.onTranscriptResults || elements.onTranscriptionStatus) {
-    transcriptEventCallback = (transcriptEvent) => {
-      if (isTranscriptEvent(transcriptEvent)) {
-        const results = transcriptEvent.results
-          .map(mapTranscriptResult)
-          .filter((result): result is WebChimeTranscriptResult => Boolean(result));
-        if (results.length) elements.onTranscriptResults?.(results);
-        return;
-      }
-
-      if (isTranscriptionStatusEvent(transcriptEvent)) {
-        elements.onTranscriptionStatus?.({
-          message: transcriptEvent.message,
-          transcriptionRegion: transcriptEvent.transcriptionRegion,
-          type: String(transcriptEvent.type),
-        });
-      }
-    };
-    audioVideo.transcriptionController?.subscribeToTranscriptEvent(transcriptEventCallback);
-  }
   await audioVideo.bindAudioElement(elements.audioElement);
 
   let videoInputDeviceId: string | null = null;
@@ -204,10 +158,6 @@ export async function startWebChimeMeeting(
       }
     },
     stop: async () => {
-      if (transcriptEventCallback) {
-        audioVideo.transcriptionController?.unsubscribeFromTranscriptEvent(transcriptEventCallback);
-        transcriptEventCallback = null;
-      }
       audioVideo.removeObserver(observer);
       audioVideo.stopLocalVideoTile();
       await audioVideo.stopVideoInput().catch(() => undefined);
@@ -233,29 +183,4 @@ function toDeviceAccessErrorMessage(error: unknown): string {
     return "마이크 장치를 찾을 수 없습니다. 장치를 연결한 뒤 다시 입장해 주세요.";
   }
   return "브라우저의 카메라/마이크 권한을 허용한 뒤 다시 입장해 주세요. 권한을 이미 허용했다면 장치 연결 상태를 확인해 주세요.";
-}
-
-function isTranscriptEvent(transcriptEvent: TranscriptEvent): transcriptEvent is Transcript {
-  return Array.isArray((transcriptEvent as Transcript).results);
-}
-
-function isTranscriptionStatusEvent(transcriptEvent: TranscriptEvent): transcriptEvent is TranscriptionStatus {
-  return typeof (transcriptEvent as TranscriptionStatus).type !== "undefined" &&
-    typeof (transcriptEvent as TranscriptionStatus).eventTimeMs === "number";
-}
-
-function mapTranscriptResult(result: TranscriptResult): WebChimeTranscriptResult | null {
-  const alternative = result.alternatives[0];
-  const transcript = alternative?.transcript?.trim() ?? "";
-  if (!result.resultId || !transcript) return null;
-
-  const speakerItem = alternative.items.find((item) => item.attendee);
-  return {
-    resultId: result.resultId,
-    isPartial: Boolean(result.isPartial),
-    languageCode: result.languageCode,
-    speakerAttendeeId: speakerItem?.attendee?.attendeeId,
-    speakerExternalUserId: speakerItem?.attendee?.externalUserId,
-    transcript,
-  };
 }

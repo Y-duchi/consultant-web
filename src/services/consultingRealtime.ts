@@ -1,5 +1,3 @@
-import type { ConsultingCallLanguageCode } from "../types/domain";
-
 export type ConsultingParticipantType = "user" | "expert" | "operator";
 
 export type ConsultingSocketStatus =
@@ -27,15 +25,6 @@ export type ConsultingRealtimeMessageEvent = {
   type: "message.new";
 };
 
-export type ConsultingCaptionTranslationEvent = {
-  bookingId: string;
-  resultId: string;
-  sourceLanguageCode: ConsultingCallLanguageCode;
-  targetLanguageCode: "ko" | "en";
-  translatedContent: string;
-  type: "caption.translation";
-};
-
 export type ConsultingServerSocketEvent =
   | {
       bookingId: string;
@@ -49,7 +38,6 @@ export type ConsultingServerSocketEvent =
       type: "message.history";
     }
   | ConsultingRealtimeMessageEvent
-  | ConsultingCaptionTranslationEvent
   | {
       bookingId: string;
       message: string;
@@ -128,14 +116,6 @@ type ConsultingClientSocketEvent =
       bookingId: string;
       readAt: string;
       type: "read";
-    }
-  | {
-      bookingId: string;
-      resultId: string;
-      sourceLanguageCode: ConsultingCallLanguageCode;
-      targetLanguageCode: "ko" | "en";
-      translatedContent: string;
-      type: "caption.translation";
     };
 
 type ConnectOptions = {

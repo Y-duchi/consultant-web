@@ -8,13 +8,9 @@ import {
   getBookings,
   getCustomerName,
   getExperts,
-  getPartnerSessionToken,
   getSettings,
   joinBookingCall,
   saveBookingChanges,
-  startBookingCallTranscription,
-  stopBookingCallTranscription,
-  translateBookingCallCaption,
   updateAvailability,
 } from "../../services/api";
 import type { BookingDetail, BookingSaveChangesInput, ChatThreadDetail } from "../../services/api";
@@ -30,10 +26,9 @@ import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/StateViews
 import { Tabs } from "../../shared/ui/Tabs";
 import { bookingStatusOptions } from "../../shared/utils/options";
 import { addDays, bookingStatusLabel, formatCurrency, formatDate, formatDateTime, formatTime, toInputDate } from "../../shared/utils/format";
-import type { AvailabilitySlot, Booking, BookingStatus, ConsultingCaptionTranslation, ConsultingCallJoinResult, ConsultingCallLanguageCode, ConsultingCallState, ManagerSettings, OperatingHours } from "../../types/domain";
+import type { AvailabilitySlot, Booking, BookingStatus, ConsultingCallJoinResult, ManagerSettings, OperatingHours } from "../../types/domain";
 import { AppReportCard } from "../reports/AppReportCard";
-import type { WebChimeMeetingController, WebChimeTranscriptResult } from "../../services/chimeMeetingClient";
-import { connectConsultingConversationSocket, type ConsultingConversationSocketClient, type ConsultingParticipantType, type ConsultingServerSocketEvent } from "../../services/consultingRealtime";
+import type { WebChimeMeetingController } from "../../services/chimeMeetingClient";
 
 type CalendarView = "month" | "week" | "day";
 type BookingEditDraft = {
@@ -48,17 +43,6 @@ type ScheduleNotice = {
   label: string;
   reason: string;
 };
-type CallCaptionViewModel = {
-  id: string;
-  isPartial: boolean;
-  resultId: string;
-  sourceLanguageCode: ConsultingCallLanguageCode;
-  speakerLabel: string;
-  targetLanguageCode?: "ko" | "en";
-  transcript: string;
-  translatedContent?: string;
-};
-
 const viewOptions: Array<{ value: CalendarView; label: string }> = [
   { value: "month", label: "월" },
   { value: "week", label: "주" },
@@ -90,8 +74,6 @@ export function BookingsPage() {
   const [saveFeedback, setSaveFeedback] = useState("");
   const [callFeedback, setCallFeedback] = useState("");
   const [callJoinResult, setCallJoinResult] = useState<ConsultingCallJoinResult | null>(null);
-  const [callState, setCallState] = useState<ConsultingCallState | null>(null);
-  const [callLanguageCode, setCallLanguageCode] = useState<ConsultingCallLanguageCode>("ko-KR");
   const [callConnectionStatus, setCallConnectionStatus] = useState("idle");
   const [callConnectionError, setCallConnectionError] = useState("");
   const [isCallMuted, setIsCallMuted] = useState(false);
@@ -102,9 +84,6 @@ export function BookingsPage() {
   const chimeClientRef = useRef<WebChimeMeetingController | null>(null);
   const chimeStartInFlightRef = useRef(false);
   const chimeStartGenerationRef = useRef(0);
-  const captionSocketRef = useRef<ConsultingConversationSocketClient | null>(null);
-  const translatedCaptionIdsRef = useRef<Set<string>>(new Set());
-  const [callCaptions, setCallCaptions] = useState<CallCaptionViewModel[]>([]);
   const [editDraft, setEditDraft] = useState<BookingEditDraft>({
     type: "",
     internalMemo: "",
@@ -193,10 +172,9 @@ export function BookingsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["availability"] }),
   });
   const joinCallMutation = useMutation({
-    mutationFn: (booking: Booking) => joinBookingCall(booking.id, callLanguageCode, user ?? undefined),
+    mutationFn: (booking: Booking) => joinBookingCall(booking.id, user ?? undefined),
     onSuccess: (result) => {
       setCallJoinResult(result);
-      setCallState(null);
       setCallConnectionError("");
       setCallConnectionStatus("connecting");
       setCallFeedback("화상 상담을 준비했습니다. 카메라와 마이크 권한을 확인해 주세요.");
@@ -206,28 +184,6 @@ export function BookingsPage() {
       setCallFeedback(error instanceof Error ? error.message : "화상 상담 입장 정보를 가져오지 못했습니다.");
     },
   });
-  const startTranscriptionMutation = useMutation({
-    mutationFn: ({ booking, transcriptionConsentAccepted }: { booking: Booking; transcriptionConsentAccepted: boolean }) =>
-      startBookingCallTranscription(booking.id, callLanguageCode, user ?? undefined, transcriptionConsentAccepted),
-    onSuccess: (result) => {
-      setCallState(result);
-      setCallFeedback(getCallTranscriptionLabel(result.transcription.status, result.transcription.mode));
-    },
-    onError: (error) => {
-      setCallFeedback(error instanceof Error ? error.message : "실시간 자막을 시작하지 못했습니다.");
-    },
-  });
-  const stopTranscriptionMutation = useMutation({
-    mutationFn: (booking: Booking) => stopBookingCallTranscription(booking.id, user ?? undefined),
-    onSuccess: (result) => {
-      setCallState(result);
-      setCallFeedback(getCallTranscriptionLabel(result.transcription.status, result.transcription.mode));
-    },
-    onError: (error) => {
-      setCallFeedback(error instanceof Error ? error.message : "실시간 자막을 중지하지 못했습니다.");
-    },
-  });
-
   const stopWebMeeting = useCallback(async () => {
     chimeStartGenerationRef.current += 1;
     chimeStartInFlightRef.current = false;
@@ -273,8 +229,6 @@ export function BookingsPage() {
         noteDraft.trim()
       ),
   );
-  const callTranscription = callState?.transcription ?? callJoinResult?.transcription ?? null;
-
   const openBooking = (booking: Booking) => {
     void stopWebMeeting();
     setSelectedBookingId(booking.id);
@@ -286,14 +240,10 @@ export function BookingsPage() {
     setSaveFeedback("");
     setCallFeedback("");
     setCallJoinResult(null);
-    setCallState(null);
-    setCallLanguageCode("ko-KR");
     setCallConnectionStatus("idle");
     setCallConnectionError("");
     setIsCallMuted(false);
     setIsCallVideoEnabled(true);
-    setCallCaptions([]);
-    translatedCaptionIdsRef.current.clear();
   };
 
   const closeBooking = () => {
@@ -306,14 +256,10 @@ export function BookingsPage() {
     setSaveFeedback("");
     setCallFeedback("");
     setCallJoinResult(null);
-    setCallState(null);
-    setCallLanguageCode("ko-KR");
     setCallConnectionStatus("idle");
     setCallConnectionError("");
     setIsCallMuted(false);
     setIsCallVideoEnabled(true);
-    setCallCaptions([]);
-    translatedCaptionIdsRef.current.clear();
     if (requestedBookingId) {
       const nextParams = new URLSearchParams(searchParams);
       nextParams.delete("bookingId");
@@ -321,41 +267,6 @@ export function BookingsPage() {
       setSearchParams(nextParams, { replace: true });
     }
   };
-
-  const handleTranscriptResults = useCallback(
-    (results: WebChimeTranscriptResult[]) => {
-      const bookingId = callJoinResult?.bookingId ?? selectedBookingId;
-      if (!bookingId) return;
-
-      setCallCaptions((current) => mergeTranscriptCaptions(current, results, callLanguageCode));
-
-      for (const result of results) {
-        const sourceLanguageCode = normalizeTranscriptLanguageCode(result.languageCode) ?? callLanguageCode;
-        const transcript = result.transcript.trim();
-        if (result.isPartial || !result.resultId || !transcript) continue;
-        if (translatedCaptionIdsRef.current.has(result.resultId)) continue;
-        translatedCaptionIdsRef.current.add(result.resultId);
-
-        void translateBookingCallCaption(
-          bookingId,
-          {
-            resultId: result.resultId,
-            sourceLanguageCode,
-            content: transcript,
-          },
-          user ?? undefined,
-        )
-          .then((translation) => {
-            setCallCaptions((current) => applyCaptionTranslation(current, translation));
-          })
-          .catch((error: unknown) => {
-            const message = error instanceof Error ? error.message : "확정 자막 번역에 실패했습니다.";
-            setCallFeedback(message);
-          });
-      }
-    },
-    [callJoinResult?.bookingId, callLanguageCode, selectedBookingId, user],
-  );
 
   useEffect(() => {
     if (
@@ -382,12 +293,6 @@ export function BookingsPage() {
         setCallConnectionStatus(message);
         setCallFeedback(message);
       },
-      onTranscriptResults: handleTranscriptResults,
-      onTranscriptionStatus: (status) => {
-        if (status.type === "failed") {
-          setCallFeedback(status.message || "실시간 자막을 시작하지 못했습니다.");
-        }
-      },
     })).then((controller) => {
       if (startGeneration !== chimeStartGenerationRef.current) {
         void controller.stop();
@@ -403,31 +308,7 @@ export function BookingsPage() {
       setCallConnectionError(message);
       setCallFeedback(message);
     });
-  }, [callJoinResult, handleTranscriptResults]);
-
-  useEffect(() => {
-    const bookingId = callJoinResult?.bookingId;
-    if (!bookingId) return;
-
-    const client = connectConsultingConversationSocket({
-      bookingId,
-      participantType: getRealtimeParticipantType(user),
-      authToken: getPartnerSessionToken(),
-      onEvent: (event: ConsultingServerSocketEvent) => {
-        if (event.type === "caption.translation") {
-          setCallCaptions((current) => applyCaptionTranslation(current, event));
-        }
-      },
-    });
-    captionSocketRef.current = client;
-
-    return () => {
-      client.close();
-      if (captionSocketRef.current === client) {
-        captionSocketRef.current = null;
-      }
-    };
-  }, [callJoinResult?.bookingId, user]);
+  }, [callJoinResult]);
 
   useEffect(() => {
     return () => {
@@ -943,21 +824,6 @@ export function BookingsPage() {
                           callFeedback ||
                           "상담 시작을 누르면 카메라와 마이크를 확인한 뒤 고객과 연결합니다."}
                       </p>
-                      <div className="workflow-call-language">
-                        <Field label="번역 방향">
-                          <SelectInput
-                            value={callLanguageCode}
-                            onChange={(event) => setCallLanguageCode(event.target.value as ConsultingCallLanguageCode)}
-                            disabled={Boolean(callJoinResult) || joinCallMutation.isPending}
-                          >
-                            <option value="ko-KR">한국어 → English</option>
-                            <option value="en-US">English → 한국어</option>
-                          </SelectInput>
-                        </Field>
-                        {callTranscription ? (
-                          <span className="tag">{getCallTranscriptionLabel(callTranscription.status, callTranscription.mode)}</span>
-                        ) : null}
-                      </div>
                       {callJoinResult ? (
                         <>
                           <div className="workflow-call-stage">
@@ -969,17 +835,6 @@ export function BookingsPage() {
                               <video ref={callLocalVideoRef} playsInline autoPlay muted />
                               <span>{isCallVideoEnabled ? "내 화면" : "카메라 꺼짐"}</span>
                             </div>
-                            {callCaptions.length ? (
-                              <div className="workflow-call-captions" aria-live="polite">
-                                {callCaptions.slice(-4).map((caption) => (
-                                  <div className={`workflow-call-caption ${caption.isPartial ? "is-partial" : ""}`} key={caption.id}>
-                                    <span>{caption.speakerLabel}</span>
-                                    <strong>{caption.transcript}</strong>
-                                    {caption.translatedContent ? <em>{caption.translatedContent}</em> : null}
-                                  </div>
-                                ))}
-                              </div>
-                            ) : null}
                             <audio ref={callAudioRef} autoPlay />
                           </div>
                           <div className="workflow-call-controls">
@@ -989,35 +844,6 @@ export function BookingsPage() {
                             <Button variant="secondary" icon={isCallVideoEnabled ? <Video size={16} /> : <VideoOff size={16} />} onClick={toggleCallVideo}>
                               {isCallVideoEnabled ? "카메라 끄기" : "카메라 켜기"}
                             </Button>
-                            {callTranscription?.enabled ? (
-                              callTranscription.status === "active" || callTranscription.status === "starting" ? (
-                                <Button
-                                  variant="secondary"
-                                  onClick={() => stopTranscriptionMutation.mutate(selectedDetail.booking)}
-                                  disabled={stopTranscriptionMutation.isPending || callTranscription.status === "starting"}
-                                >
-                                  {stopTranscriptionMutation.isPending ? "자막 중지 중" : "자막 중지"}
-                                </Button>
-                              ) : (
-                                <Button
-                                  variant="secondary"
-                                  onClick={() => {
-                                    const accepted = window.confirm(
-                                      "고객과 상담사가 실시간 음성 인식 및 번역 자막 사용에 동의했나요?",
-                                    );
-                                    if (accepted) {
-                                      startTranscriptionMutation.mutate({
-                                        booking: selectedDetail.booking,
-                                        transcriptionConsentAccepted: true,
-                                      });
-                                    }
-                                  }}
-                                  disabled={startTranscriptionMutation.isPending || callTranscription.status === "stopping"}
-                                >
-                                  {startTranscriptionMutation.isPending ? "자막 시작 중" : "자막 시작"}
-                                </Button>
-                              )
-                            ) : null}
                           </div>
                         </>
                       ) : canJoinVideoCall(previewBooking) ? (
@@ -1099,71 +925,6 @@ export function BookingsPage() {
       </Modal>
     </>
   );
-}
-
-function mergeTranscriptCaptions(
-  current: CallCaptionViewModel[],
-  results: WebChimeTranscriptResult[],
-  fallbackLanguageCode: ConsultingCallLanguageCode,
-) {
-  const next = [...current];
-  for (const result of results) {
-    const transcript = result.transcript.trim();
-    if (!result.resultId || !transcript) continue;
-
-    const caption: CallCaptionViewModel = {
-      id: result.resultId,
-      isPartial: result.isPartial,
-      resultId: result.resultId,
-      sourceLanguageCode: normalizeTranscriptLanguageCode(result.languageCode) ?? fallbackLanguageCode,
-      speakerLabel: getCaptionSpeakerLabel(result.speakerExternalUserId),
-      transcript,
-    };
-    const existingIndex = next.findIndex((item) => item.resultId === caption.resultId);
-    if (existingIndex >= 0) {
-      next[existingIndex] = {
-        ...next[existingIndex],
-        ...caption,
-        targetLanguageCode: next[existingIndex].targetLanguageCode,
-        translatedContent: next[existingIndex].translatedContent,
-      };
-    } else {
-      next.push(caption);
-    }
-  }
-  return next.slice(-16);
-}
-
-function applyCaptionTranslation<T extends ConsultingCaptionTranslation>(
-  current: CallCaptionViewModel[],
-  translation: T,
-) {
-  return current.map((caption) =>
-    caption.resultId === translation.resultId
-      ? {
-          ...caption,
-          sourceLanguageCode: translation.sourceLanguageCode,
-          targetLanguageCode: translation.targetLanguageCode,
-          translatedContent: translation.translatedContent,
-        }
-      : caption,
-  );
-}
-
-function normalizeTranscriptLanguageCode(value?: string): ConsultingCallLanguageCode | null {
-  if (value === "ko-KR" || value?.toLowerCase().startsWith("ko")) return "ko-KR";
-  if (value === "en-US" || value?.toLowerCase().startsWith("en")) return "en-US";
-  return null;
-}
-
-function getCaptionSpeakerLabel(externalUserId?: string) {
-  if (externalUserId?.startsWith("customer:")) return "고객";
-  if (externalUserId?.startsWith("partner:")) return "상담사";
-  return "참가자";
-}
-
-function getRealtimeParticipantType(user: { role?: string } | null): ConsultingParticipantType {
-  return user?.role === "admin" || user?.role === "operator" ? "operator" : "expert";
 }
 
 function CalendarViewRenderer({
@@ -1498,15 +1259,6 @@ const availabilityKindLabel: Record<AvailabilitySlot["kind"], string> = {
   holiday: "휴무일",
   exception: "기타",
 };
-
-function getCallTranscriptionLabel(status: string, mode: string) {
-  if (status === "disabled") return "자막 꺼짐";
-  if (status === "starting") return "자막 시작 중";
-  if (status === "active") return mode === "identify" ? "자막 켜짐 · 한/영 자동" : "자막 켜짐";
-  if (status === "stopping") return "자막 중지 중";
-  if (status === "failed") return "자막 오류";
-  return "자막 대기";
-}
 
 function canJoinVideoCall(booking: Booking) {
   return booking.channel === "video" && ["confirmed", "scheduled", "in_progress"].includes(booking.status);

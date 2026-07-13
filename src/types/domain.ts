@@ -219,20 +219,6 @@ export interface Booking {
   reviewRequestStatus: "not_ready" | "ready" | "sent" | "reviewed";
 }
 
-export type ConsultingCallLanguageCode = "ko-KR" | "en-US";
-export type ConsultingCallTranscriptionMode = "fixed" | "identify";
-export type ConsultingCallTranscriptionStatus = "disabled" | "stopped" | "starting" | "active" | "stopping" | "failed";
-
-export interface ConsultingCallTranscription {
-  enabled: boolean;
-  translationEnabled: boolean;
-  status: ConsultingCallTranscriptionStatus;
-  mode: ConsultingCallTranscriptionMode;
-  languageCode?: ConsultingCallLanguageCode | null;
-  customerLanguageCode?: ConsultingCallLanguageCode | null;
-  expertLanguageCode?: ConsultingCallLanguageCode | null;
-}
-
 export interface ConsultingCallState {
   callSessionId: string | null;
   bookingId: string;
@@ -243,7 +229,6 @@ export interface ConsultingCallState {
   startedAt?: string | null;
   endedAt?: string | null;
   chimeEnabled: boolean;
-  transcription: ConsultingCallTranscription;
   summaryStatus?: "succeeded" | "failed" | null;
 }
 
@@ -251,25 +236,12 @@ export interface ConsultingCallJoinResult {
   callSessionId: string;
   bookingId: string;
   participantType?: "user" | "expert";
-  participantLanguageCode?: ConsultingCallLanguageCode;
-  supportedLanguageCodes?: ConsultingCallLanguageCode[];
   participant: {
     id: string;
     type: "customer" | "partner";
-    languageCode: ConsultingCallLanguageCode;
   };
   meeting: Record<string, unknown>;
   attendee: Record<string, unknown>;
-  transcription: ConsultingCallTranscription;
-  transcriptionStatus?: ConsultingCallTranscriptionStatus;
-  transcriptionMode?: ConsultingCallTranscriptionMode;
-}
-
-export interface ConsultingCaptionTranslation {
-  resultId: string;
-  sourceLanguageCode: ConsultingCallLanguageCode;
-  targetLanguageCode: "ko" | "en";
-  translatedContent: string;
 }
 
 export interface AvailabilitySlot {
