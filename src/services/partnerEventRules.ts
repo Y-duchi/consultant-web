@@ -45,7 +45,16 @@ export function getPartnerEventFallbackRefetchRoots() {
 export function getPartnerEventInvalidationRoots(event: PartnerEvent) {
   if (event.type === "heartbeat") return [];
   const roots = ["dashboard-summary"];
-  if (event.type.startsWith("booking.")) roots.push("bookings", "completion-bookings", "booking-detail", "completion-booking-detail");
+  if (event.type.startsWith("booking.")) {
+    roots.push(
+      "bookings",
+      "completion-bookings",
+      "booking-detail",
+      "completion-booking-detail",
+      "chat-threads",
+      "chat-thread-detail",
+    );
+  }
   if (event.type.startsWith("summary.")) roots.push("completion-booking-detail", "customer-detail", "admin-summary-jobs");
   if (event.type === "review.created") roots.push("reviews");
   if (event.type === "refund.updated") roots.push("bookings", "dashboard-summary");

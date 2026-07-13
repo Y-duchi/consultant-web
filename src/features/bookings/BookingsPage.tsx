@@ -17,7 +17,8 @@ import {
   translateBookingCallCaption,
   updateAvailability,
 } from "../../services/api";
-import type { BookingDetail, BookingSaveChangesInput } from "../../services/api";
+import type { BookingDetail, BookingSaveChangesInput, ChatThreadDetail } from "../../services/api";
+import { isBookingVisibleInChat } from "../../services/chatVisibility";
 import { useAuth } from "../auth/AuthContext";
 import { BookingStatusBadge, PaymentStatusBadge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
@@ -170,6 +171,14 @@ export function BookingsPage() {
       );
       queryClient.setQueriesData<BookingDetail>({ queryKey: ["booking-detail", booking.id] }, (current) =>
         current ? { ...current, booking } : current,
+      );
+      queryClient.setQueriesData<ChatThreadDetail[]>({ queryKey: ["chat-threads"] }, (current) =>
+        current
+          ?.map((item) => item.booking?.id === booking.id ? { ...item, booking } : item)
+          .filter((item) => isBookingVisibleInChat(item.booking)),
+      );
+      queryClient.setQueriesData<ChatThreadDetail>({ queryKey: ["chat-thread-detail"] }, (current) =>
+        current?.booking?.id === booking.id ? { ...current, booking } : current,
       );
       setEditDraft(makeEditDraft(booking));
       setPendingStatus(null);
@@ -458,49 +467,24 @@ export function BookingsPage() {
     return { ...changes, ...extra };
   };
 
-  const getDepositMessage = () => {
-    if (!selectedDetail || !previewBooking) return;
-    const amount = formatCurrency(previewBooking.paidAmount);
-    return [
-      `안녕하세요, ${selectedDetail.customer.name}님. 예약 확정을 위한 입금 안내드립니다.`,
-      `입금 금액: ${amount}`,
-      "입금 계좌: [은행 / 계좌번호를 입력하세요]",
-      "입금자명: [입금자 성함]",
-      "입금이 확인되면 예약 완료로 처리해 드리겠습니다.",
-    ].join("\n");
-  };
-
-  const openDepositMessage = () => {
+  const acceptAndConfirmBooking = () => {
     if (!selectedDetail) return;
-    const template = getDepositMessage();
-    if (!template) return;
-    navigate(`/workspace/chat?bookingId=${selectedDetail.booking.id}&compose=${encodeURIComponent(template)}`);
-  };
-
-  const acceptBookingAndOpenChat = () => {
-    if (!selectedDetail) return;
-    const template = getDepositMessage();
-    if (!template) return;
+    const confirmed = window.confirm(
+      "예약 신청을 수락할까요? 수락하면 예약이 확정되고 고객에게 안내 메시지가 전달됩니다.",
+    );
+    if (!confirmed) return;
     saveChangesMutation.mutate(
-      { bookingId: selectedDetail.booking.id, changes: { status: "contacting" } },
       {
-        onSuccess: (booking) => {
-          navigate(`/workspace/chat?bookingId=${booking.id}&compose=${encodeURIComponent(template)}`);
+        bookingId: selectedDetail.booking.id,
+        changes: buildPendingBookingChanges({ markPaymentPaid: true, status: "confirmed" }),
+      },
+      {
+        onSuccess: async (booking) => {
+          await queryClient.refetchQueries({ queryKey: ["chat-threads"], type: "active" });
+          navigate(`/workspace/chat?bookingId=${booking.id}`);
         },
       },
     );
-  };
-
-  const completeBookingAfterDeposit = () => {
-    if (!selectedDetail) return;
-    const confirmed = window.confirm(
-      "입금을 확인했나요? 확인하면 고객에게 예약 완료 안내가 전달됩니다.",
-    );
-    if (!confirmed) return;
-    saveChangesMutation.mutate({
-      bookingId: selectedDetail.booking.id,
-      changes: buildPendingBookingChanges({ markPaymentPaid: true, status: "confirmed" }),
-    });
   };
 
   const cancelBookingFromExpert = () => {
@@ -555,7 +539,7 @@ export function BookingsPage() {
       <PageHeader
         eyebrow="Bookings"
         title="앱 예약 관리"
-        description="고객 예약 신청 이후 채팅방에서 선결제 또는 예약금 입금을 확인하고, 전문가가 확정한 상담만 화상통화와 AI 요약 리포트로 이어집니다."
+        description="고객 예약 신청을 검토하고 수락하세요. 확정된 예약만 고객 채팅과 화상통화, AI 요약 리포트로 이어집니다."
         actions={
           <Button variant="secondary" icon={<CalendarRange size={17} />} onClick={() => setAnchorDate(new Date())}>
             오늘로 이동
@@ -568,7 +552,7 @@ export function BookingsPage() {
           <div className="panel-header">
             <div>
               <h2>처리 대기 예약</h2>
-              <p>알림을 닫아도 이 목록에서 신청을 수락하고 고객 채팅을 이어갈 수 있습니다.</p>
+              <p>알림을 닫아도 이 목록에서 신청을 확인하고 예약을 확정할 수 있습니다.</p>
             </div>
             <span className="tag">{pendingBookings.length}건</span>
           </div>
@@ -891,34 +875,19 @@ export function BookingsPage() {
 
                   {isDepositWorkflowBooking(previewBooking) ? (
                     <div className="simple-booking-actions">
-                      <div className="simple-booking-step">
+                      <div className="simple-booking-step is-primary">
                         <span>1</span>
                         <div>
-                          <strong>입금 안내 메시지 보내기</strong>
-                          <p>채팅방에서 계좌와 금액을 확인해 고객에게 안내합니다.</p>
-                        </div>
-                        <Button
-                          variant={previewBooking.status === "requested" ? "primary" : "secondary"}
-                          icon={<MessageSquareText size={16} />}
-                          onClick={previewBooking.status === "requested" ? acceptBookingAndOpenChat : openDepositMessage}
-                          disabled={saveChangesMutation.isPending}
-                        >
-                          {previewBooking.status === "requested" ? "신청 수락·메시지 작성" : "메시지 작성"}
-                        </Button>
-                      </div>
-                      <div className="simple-booking-step is-primary">
-                        <span>2</span>
-                        <div>
-                          <strong>입금 확인 후 예약 완료</strong>
-                          <p>입금이 확인되면 이 버튼 하나로 예약 완료 처리와 고객 안내가 함께 진행됩니다.</p>
+                          <strong>예약 신청 수락</strong>
+                          <p>일정과 신청 내용을 확인한 뒤 수락하면 예약이 확정되고 고객 채팅이 열립니다.</p>
                         </div>
                         <Button
                           variant="primary"
                           icon={<CheckCircle2 size={16} />}
-                          onClick={completeBookingAfterDeposit}
+                          onClick={acceptAndConfirmBooking}
                           disabled={saveChangesMutation.isPending}
                         >
-                          {saveChangesMutation.isPending ? "예약 완료 처리 중" : "입금 확인·예약 완료"}
+                          {saveChangesMutation.isPending ? "예약 확정 중" : "예약 수락·확정"}
                         </Button>
                       </div>
                     </div>
@@ -944,10 +913,25 @@ export function BookingsPage() {
                       </Button>
                     </div>
                   ) : (
-                    <div className="workflow-next-card is-muted">
-                      <span>처리 결과</span>
-                      <strong>{previewBooking.status === "cancelled" ? "예약 취소 기록" : "상담 완료"}</strong>
-                      <p>{previewBooking.status === "cancelled" ? "고객이 취소한 예약입니다. 삭제하지 않고 확인 기록으로 보관합니다." : "상담과 후속 처리가 완료된 예약입니다."}</p>
+                    <div className={previewBooking.status === "completed" ? "workflow-next-card" : "workflow-next-card is-muted"}>
+                      <div>
+                        <span>처리 결과</span>
+                        <strong>{previewBooking.status === "completed" ? "상담 완료" : bookingStatusLabel[previewBooking.status]}</strong>
+                        <p>
+                          {previewBooking.status === "completed"
+                            ? "상담은 완료됐지만 기존 채팅에서 후속 안내를 계속할 수 있습니다."
+                            : "예약 내역과 기존 대화는 고객·전문가의 확인 기록으로 보관됩니다."}
+                        </p>
+                      </div>
+                      {isBookingVisibleInChat(previewBooking) ? (
+                        <Button
+                          variant="secondary"
+                          icon={<MessageSquareText size={16} />}
+                          onClick={() => navigate(`/workspace/chat?bookingId=${selectedDetail.booking.id}`)}
+                        >
+                          {previewBooking.status === "completed" ? "후속 메시지 보기" : "대화 기록 보기"}
+                        </Button>
+                      ) : null}
                     </div>
                   )}
 
@@ -1466,7 +1450,7 @@ function isDepositWorkflowBooking(booking: Booking) {
 }
 
 function getSimpleBookingStageLabel(booking: Booking) {
-  if (isDepositWorkflowBooking(booking)) return booking.paymentStatus === "paid" ? "예약 완료 대기" : "입금 안내 필요";
+  if (isDepositWorkflowBooking(booking)) return "예약 수락 대기";
   if (booking.status === "confirmed" || booking.status === "scheduled") return "예약 완료";
   if (booking.status === "in_progress") return "상담 진행 중";
   if (booking.status === "completed") return "상담 완료";
@@ -1477,7 +1461,7 @@ function getSimpleBookingStageLabel(booking: Booking) {
 
 function getSimpleBookingStageDescription(booking: Booking) {
   if (isDepositWorkflowBooking(booking)) {
-    return "고객에게 계좌 안내 메시지를 보낸 뒤, 입금이 확인되면 ‘입금 확인·예약 완료’만 누르세요.";
+    return "일정과 신청 내용을 확인한 뒤 ‘예약 수락·확정’을 누르세요. 확정 전에는 채팅 목록에 표시되지 않습니다.";
   }
   if (booking.status === "confirmed" || booking.status === "scheduled") {
     return "예약이 완료되었습니다. 예약 시간에 전문가가 먼저 화상 상담을 시작합니다.";
