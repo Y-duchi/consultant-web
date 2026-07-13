@@ -225,7 +225,6 @@ export type ConsultingCallTranscriptionStatus = "disabled" | "stopped" | "starti
 
 export interface ConsultingCallTranscription {
   enabled: boolean;
-  translationEnabled: boolean;
   status: ConsultingCallTranscriptionStatus;
   mode: ConsultingCallTranscriptionMode;
   languageCode?: ConsultingCallLanguageCode | null;
@@ -263,13 +262,6 @@ export interface ConsultingCallJoinResult {
   transcription: ConsultingCallTranscription;
   transcriptionStatus?: ConsultingCallTranscriptionStatus;
   transcriptionMode?: ConsultingCallTranscriptionMode;
-}
-
-export interface ConsultingCaptionTranslation {
-  resultId: string;
-  sourceLanguageCode: ConsultingCallLanguageCode;
-  targetLanguageCode: "ko" | "en";
-  translatedContent: string;
 }
 
 export interface AvailabilitySlot {

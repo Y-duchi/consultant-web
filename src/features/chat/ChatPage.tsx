@@ -1,7 +1,7 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BellRing, FileImage, Languages, LogOut, Mic, MicOff, Phone, PhoneOff, Search, Send, Video, VideoOff } from "lucide-react";
+import { BellRing, FileImage, LogOut, MessageSquareText, Mic, MicOff, Phone, PhoneOff, Search, Send, Video, VideoOff } from "lucide-react";
 import {
   endBookingCall,
   getChatThreadDetail,
@@ -12,7 +12,6 @@ import {
   markChatThreadRead,
   sendMessage as sendChatText,
   startBookingCallTranscription,
-  translateBookingCallCaption,
   uploadChatAttachment,
 } from "../../services/api";
 import type { WebChimeMeetingController, WebChimeTranscriptResult } from "../../services/chimeMeetingClient";
@@ -31,7 +30,7 @@ import { TextInput } from "../../shared/ui/Field";
 import { PageHeader } from "../../shared/ui/PageHeader";
 import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/StateViews";
 import { formatDateTime, formatTime } from "../../shared/utils/format";
-import type { Attachment, AuthUser, BookingStatus, ChatMessage, ConsultingCallLanguageCode } from "../../types/domain";
+import type { Attachment, AuthUser, BookingStatus, ChatMessage } from "../../types/domain";
 import { AppReportCard } from "../reports/AppReportCard";
 
 export function ChatPage() {
@@ -47,7 +46,7 @@ export function ChatPage() {
   const callLocalVideoRef = useRef<HTMLVideoElement | null>(null);
   const callAudioRef = useRef<HTMLAudioElement | null>(null);
   const callTranscriptRef = useRef<Map<string, string>>(new Map());
-  const callTranslationActiveRef = useRef(false);
+  const callCaptionsActiveRef = useRef(false);
   const [query, setQuery] = useState("");
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
@@ -61,9 +60,8 @@ export function ChatPage() {
   const [callError, setCallError] = useState("");
   const [callMuted, setCallMuted] = useState(false);
   const [callVideoEnabled, setCallVideoEnabled] = useState(true);
-  const [callTranslationActive, setCallTranslationActive] = useState(false);
-  const [callLanguageCode, setCallLanguageCode] = useState<ConsultingCallLanguageCode>("ko-KR");
-  const [callCaptions, setCallCaptions] = useState<LiveCallCaption[]>([]);
+  const [callCaptionsActive, setCallCaptionsActive] = useState(false);
+  const [callCaptions, setCallCaptions] = useState<WebChimeTranscriptResult[]>([]);
   const [callSummaryPending, setCallSummaryPending] = useState(false);
   const requestedBookingId = searchParams.get("bookingId")?.trim() ?? "";
   const composeTemplate = searchParams.get("compose")?.trim() ?? "";
@@ -89,30 +87,17 @@ export function ChatPage() {
       queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
     },
   });
-  const handleCallTranscriptResults = (bookingId: string, results: WebChimeTranscriptResult[]) => {
-    setCallCaptions((current) => mergeCallCaptions(current, results));
+  const handleCallTranscriptResults = (results: WebChimeTranscriptResult[]) => {
+    if (callCaptionsActiveRef.current) {
+      setCallCaptions((current) => mergeCallCaptions(current, results));
+    }
     for (const result of results) {
       if (result.isPartial) continue;
       callTranscriptRef.current.set(result.resultId, result.transcript);
-      if (!callTranslationActiveRef.current) continue;
-      const sourceLanguageCode = result.languageCode === "en-US" ? "en-US" : "ko-KR";
-      void translateBookingCallCaption(
-        bookingId,
-        { resultId: result.resultId, sourceLanguageCode, content: result.transcript },
-        user ?? undefined,
-      ).then((translation) => {
-        setCallCaptions((current) => current.map((caption) =>
-          caption.resultId === translation.resultId
-            ? { ...caption, translatedContent: translation.translatedContent }
-            : caption,
-        ));
-      }).catch((error: unknown) => {
-        setCallError(error instanceof Error ? error.message : "실시간 번역에 실패했습니다.");
-      });
     }
   };
   const joinCallMutation = useMutation({
-    mutationFn: (bookingId: string) => joinBookingCall(bookingId, callLanguageCode, user ?? undefined),
+    mutationFn: (bookingId: string) => joinBookingCall(bookingId, "ko-KR", user ?? undefined),
     onSuccess: async (result) => {
       if (!callRemoteVideoRef.current || !callLocalVideoRef.current || !callAudioRef.current) {
         setCallError("화상통화 화면을 준비하지 못했습니다. 창을 닫고 다시 시도해 주세요.");
@@ -126,7 +111,7 @@ export function ChatPage() {
           localVideoElement: callLocalVideoRef.current,
           audioElement: callAudioRef.current,
           onStatusChange: setCallStatus,
-          onTranscriptResults: (results) => handleCallTranscriptResults(result.bookingId, results),
+          onTranscriptResults: handleCallTranscriptResults,
           onTranscriptionStatus: (status) => setCallStatus(status.message || "실시간 자막 상태를 확인하고 있습니다."),
         });
         setCallStatus("화상통화 방이 열렸습니다. 고객의 입장을 기다리고 있습니다.");
@@ -415,8 +400,8 @@ export function ChatPage() {
     setCallError("");
     setCallStatus("화상 상담을 준비하는 중입니다.");
     setCallCaptions([]);
-    setCallTranslationActive(false);
-    callTranslationActiveRef.current = false;
+    setCallCaptionsActive(false);
+    callCaptionsActiveRef.current = false;
     callTranscriptRef.current.clear();
     setSelectedReportId(detail.sharedReports[0]?.id ?? null);
     setCallOpen(true);
@@ -429,8 +414,8 @@ export function ChatPage() {
     setCallOpen(false);
     setCallMuted(false);
     setCallVideoEnabled(true);
-    setCallTranslationActive(false);
-    callTranslationActiveRef.current = false;
+    setCallCaptionsActive(false);
+    callCaptionsActiveRef.current = false;
   };
 
   const endVideoCall = async () => {
@@ -458,22 +443,23 @@ export function ChatPage() {
     }
   };
 
-  const toggleCallTranslation = async () => {
+  const toggleCallCaptions = async () => {
     const bookingId = detail?.booking?.id;
     if (!bookingId || !callControllerRef.current) return;
     try {
-      if (callTranslationActive) {
-        setCallTranslationActive(false);
-        callTranslationActiveRef.current = false;
-        setCallStatus("내 화면의 실시간 번역을 껐습니다.");
+      if (callCaptionsActive) {
+        setCallCaptionsActive(false);
+        callCaptionsActiveRef.current = false;
+        setCallCaptions([]);
+        setCallStatus("실시간 자막을 껐습니다.");
         return;
       }
-      await startBookingCallTranscription(bookingId, callLanguageCode, user ?? undefined, true);
-      setCallTranslationActive(true);
-      callTranslationActiveRef.current = true;
-      setCallStatus(`${getTranslationDirectionLabel(callLanguageCode)} 번역이 시작됐습니다.`);
+      await startBookingCallTranscription(bookingId, "ko-KR", user ?? undefined, true);
+      setCallCaptionsActive(true);
+      callCaptionsActiveRef.current = true;
+      setCallStatus("실시간 자막이 시작됐습니다.");
     } catch (error) {
-      setCallError(error instanceof Error ? error.message : "실시간 번역을 시작하지 못했습니다.");
+      setCallError(error instanceof Error ? error.message : "실시간 자막을 시작하지 못했습니다.");
     }
   };
 
@@ -740,12 +726,12 @@ export function ChatPage() {
             </Button>
             <Button
               type="button"
-              variant={callTranslationActive ? "primary" : "secondary"}
-              icon={<Languages size={16} />}
-              onClick={() => void toggleCallTranslation()}
+              variant={callCaptionsActive ? "primary" : "secondary"}
+              icon={<MessageSquareText size={16} />}
+              onClick={() => void toggleCallCaptions()}
               disabled={!callControllerRef.current}
             >
-              {callTranslationActive ? "번역 종료" : `${getTranslationDirectionLabel(callLanguageCode)} 번역`}
+              {callCaptionsActive ? "자막 종료" : "실시간 자막"}
             </Button>
             <Button type="button" variant="danger" icon={<PhoneOff size={16} />} onClick={() => void endVideoCall()} disabled={callSummaryPending}>
               {callSummaryPending ? "요약 저장 중" : "통화 종료"}
@@ -767,7 +753,6 @@ export function ChatPage() {
                 {callCaptions.slice(-2).map((caption) => (
                   <div className="chat-call-caption" key={caption.resultId}>
                     <strong>{caption.transcript}</strong>
-                    {caption.translatedContent ? <span>{caption.translatedContent}</span> : null}
                   </div>
                 ))}
               </div>
@@ -800,17 +785,6 @@ export function ChatPage() {
           </aside>
         </div>
         <div className={`chat-call-status ${callError ? "is-error" : ""}`} role="status">
-          <label className="chat-call-translation-direction">
-            <span>번역 방향</span>
-            <select
-              value={callLanguageCode}
-              onChange={(event) => setCallLanguageCode(event.target.value as ConsultingCallLanguageCode)}
-              disabled={callTranslationActive}
-            >
-              <option value="ko-KR">한국어 → English</option>
-              <option value="en-US">English → 한국어</option>
-            </select>
-          </label>
           <strong>{callError ? "연결 실패" : "통화 상태"}</strong>
           <span>{callError || callStatus}</span>
           {callError ? (
@@ -832,20 +806,12 @@ export function ChatPage() {
   );
 }
 
-function getTranslationDirectionLabel(languageCode: ConsultingCallLanguageCode) {
-  return languageCode === "en-US" ? "영→한" : "한→영";
-}
-
 type LiveChatMessage = ChatMessage & {
   clientMessageId?: string;
   deliveryStatus?: "failed" | "pending" | "sent";
 };
 
-type LiveCallCaption = WebChimeTranscriptResult & {
-  translatedContent?: string;
-};
-
-function mergeCallCaptions(current: LiveCallCaption[], incoming: WebChimeTranscriptResult[]) {
+function mergeCallCaptions(current: WebChimeTranscriptResult[], incoming: WebChimeTranscriptResult[]) {
   const merged = [...current];
   for (const caption of incoming) {
     const existingIndex = merged.findIndex((item) => item.resultId === caption.resultId);
@@ -853,7 +819,6 @@ function mergeCallCaptions(current: LiveCallCaption[], incoming: WebChimeTranscr
       merged[existingIndex] = {
         ...merged[existingIndex],
         ...caption,
-        translatedContent: merged[existingIndex].translatedContent,
       };
     } else {
       merged.push(caption);

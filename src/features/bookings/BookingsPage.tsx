@@ -8,13 +8,11 @@ import {
   getBookings,
   getCustomerName,
   getExperts,
-  getPartnerSessionToken,
   getSettings,
   joinBookingCall,
   saveBookingChanges,
   startBookingCallTranscription,
   stopBookingCallTranscription,
-  translateBookingCallCaption,
   updateAvailability,
 } from "../../services/api";
 import type { BookingDetail, BookingSaveChangesInput, ChatThreadDetail } from "../../services/api";
@@ -30,10 +28,9 @@ import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/StateViews
 import { Tabs } from "../../shared/ui/Tabs";
 import { bookingStatusOptions } from "../../shared/utils/options";
 import { addDays, bookingStatusLabel, formatCurrency, formatDate, formatDateTime, formatTime, toInputDate } from "../../shared/utils/format";
-import type { AvailabilitySlot, Booking, BookingStatus, ConsultingCaptionTranslation, ConsultingCallJoinResult, ConsultingCallLanguageCode, ConsultingCallState, ManagerSettings, OperatingHours } from "../../types/domain";
+import type { AvailabilitySlot, Booking, BookingStatus, ConsultingCallJoinResult, ConsultingCallLanguageCode, ConsultingCallState, ManagerSettings, OperatingHours } from "../../types/domain";
 import { AppReportCard } from "../reports/AppReportCard";
 import type { WebChimeMeetingController, WebChimeTranscriptResult } from "../../services/chimeMeetingClient";
-import { connectConsultingConversationSocket, type ConsultingConversationSocketClient, type ConsultingParticipantType, type ConsultingServerSocketEvent } from "../../services/consultingRealtime";
 
 type CalendarView = "month" | "week" | "day";
 type BookingEditDraft = {
@@ -54,9 +51,7 @@ type CallCaptionViewModel = {
   resultId: string;
   sourceLanguageCode: ConsultingCallLanguageCode;
   speakerLabel: string;
-  targetLanguageCode?: "ko" | "en";
   transcript: string;
-  translatedContent?: string;
 };
 
 const viewOptions: Array<{ value: CalendarView; label: string }> = [
@@ -91,7 +86,7 @@ export function BookingsPage() {
   const [callFeedback, setCallFeedback] = useState("");
   const [callJoinResult, setCallJoinResult] = useState<ConsultingCallJoinResult | null>(null);
   const [callState, setCallState] = useState<ConsultingCallState | null>(null);
-  const [callLanguageCode, setCallLanguageCode] = useState<ConsultingCallLanguageCode>("ko-KR");
+  const callLanguageCode: ConsultingCallLanguageCode = "ko-KR";
   const [callConnectionStatus, setCallConnectionStatus] = useState("idle");
   const [callConnectionError, setCallConnectionError] = useState("");
   const [isCallMuted, setIsCallMuted] = useState(false);
@@ -102,8 +97,6 @@ export function BookingsPage() {
   const chimeClientRef = useRef<WebChimeMeetingController | null>(null);
   const chimeStartInFlightRef = useRef(false);
   const chimeStartGenerationRef = useRef(0);
-  const captionSocketRef = useRef<ConsultingConversationSocketClient | null>(null);
-  const translatedCaptionIdsRef = useRef<Set<string>>(new Set());
   const [callCaptions, setCallCaptions] = useState<CallCaptionViewModel[]>([]);
   const [editDraft, setEditDraft] = useState<BookingEditDraft>({
     type: "",
@@ -287,13 +280,11 @@ export function BookingsPage() {
     setCallFeedback("");
     setCallJoinResult(null);
     setCallState(null);
-    setCallLanguageCode("ko-KR");
     setCallConnectionStatus("idle");
     setCallConnectionError("");
     setIsCallMuted(false);
     setIsCallVideoEnabled(true);
     setCallCaptions([]);
-    translatedCaptionIdsRef.current.clear();
   };
 
   const closeBooking = () => {
@@ -307,13 +298,11 @@ export function BookingsPage() {
     setCallFeedback("");
     setCallJoinResult(null);
     setCallState(null);
-    setCallLanguageCode("ko-KR");
     setCallConnectionStatus("idle");
     setCallConnectionError("");
     setIsCallMuted(false);
     setIsCallVideoEnabled(true);
     setCallCaptions([]);
-    translatedCaptionIdsRef.current.clear();
     if (requestedBookingId) {
       const nextParams = new URLSearchParams(searchParams);
       nextParams.delete("bookingId");
@@ -328,33 +317,8 @@ export function BookingsPage() {
       if (!bookingId) return;
 
       setCallCaptions((current) => mergeTranscriptCaptions(current, results, callLanguageCode));
-
-      for (const result of results) {
-        const sourceLanguageCode = normalizeTranscriptLanguageCode(result.languageCode) ?? callLanguageCode;
-        const transcript = result.transcript.trim();
-        if (result.isPartial || !result.resultId || !transcript) continue;
-        if (translatedCaptionIdsRef.current.has(result.resultId)) continue;
-        translatedCaptionIdsRef.current.add(result.resultId);
-
-        void translateBookingCallCaption(
-          bookingId,
-          {
-            resultId: result.resultId,
-            sourceLanguageCode,
-            content: transcript,
-          },
-          user ?? undefined,
-        )
-          .then((translation) => {
-            setCallCaptions((current) => applyCaptionTranslation(current, translation));
-          })
-          .catch((error: unknown) => {
-            const message = error instanceof Error ? error.message : "확정 자막 번역에 실패했습니다.";
-            setCallFeedback(message);
-          });
-      }
     },
-    [callJoinResult?.bookingId, callLanguageCode, selectedBookingId, user],
+    [callJoinResult?.bookingId, selectedBookingId],
   );
 
   useEffect(() => {
@@ -404,30 +368,6 @@ export function BookingsPage() {
       setCallFeedback(message);
     });
   }, [callJoinResult, handleTranscriptResults]);
-
-  useEffect(() => {
-    const bookingId = callJoinResult?.bookingId;
-    if (!bookingId) return;
-
-    const client = connectConsultingConversationSocket({
-      bookingId,
-      participantType: getRealtimeParticipantType(user),
-      authToken: getPartnerSessionToken(),
-      onEvent: (event: ConsultingServerSocketEvent) => {
-        if (event.type === "caption.translation") {
-          setCallCaptions((current) => applyCaptionTranslation(current, event));
-        }
-      },
-    });
-    captionSocketRef.current = client;
-
-    return () => {
-      client.close();
-      if (captionSocketRef.current === client) {
-        captionSocketRef.current = null;
-      }
-    };
-  }, [callJoinResult?.bookingId, user]);
 
   useEffect(() => {
     return () => {
@@ -943,21 +883,9 @@ export function BookingsPage() {
                           callFeedback ||
                           "상담 시작을 누르면 카메라와 마이크를 확인한 뒤 고객과 연결합니다."}
                       </p>
-                      <div className="workflow-call-language">
-                        <Field label="번역 방향">
-                          <SelectInput
-                            value={callLanguageCode}
-                            onChange={(event) => setCallLanguageCode(event.target.value as ConsultingCallLanguageCode)}
-                            disabled={Boolean(callJoinResult) || joinCallMutation.isPending}
-                          >
-                            <option value="ko-KR">한국어 → English</option>
-                            <option value="en-US">English → 한국어</option>
-                          </SelectInput>
-                        </Field>
-                        {callTranscription ? (
-                          <span className="tag">{getCallTranscriptionLabel(callTranscription.status, callTranscription.mode)}</span>
-                        ) : null}
-                      </div>
+                      {callTranscription ? (
+                        <span className="tag">{getCallTranscriptionLabel(callTranscription.status, callTranscription.mode)}</span>
+                      ) : null}
                       {callJoinResult ? (
                         <>
                           <div className="workflow-call-stage">
@@ -975,7 +903,6 @@ export function BookingsPage() {
                                   <div className={`workflow-call-caption ${caption.isPartial ? "is-partial" : ""}`} key={caption.id}>
                                     <span>{caption.speakerLabel}</span>
                                     <strong>{caption.transcript}</strong>
-                                    {caption.translatedContent ? <em>{caption.translatedContent}</em> : null}
                                   </div>
                                 ))}
                               </div>
@@ -1003,7 +930,7 @@ export function BookingsPage() {
                                   variant="secondary"
                                   onClick={() => {
                                     const accepted = window.confirm(
-                                      "고객과 상담사가 실시간 음성 인식 및 번역 자막 사용에 동의했나요?",
+                                      "고객과 상담사가 실시간 음성 인식 자막 사용에 동의했나요?",
                                     );
                                     if (accepted) {
                                       startTranscriptionMutation.mutate({
@@ -1124,30 +1051,12 @@ function mergeTranscriptCaptions(
       next[existingIndex] = {
         ...next[existingIndex],
         ...caption,
-        targetLanguageCode: next[existingIndex].targetLanguageCode,
-        translatedContent: next[existingIndex].translatedContent,
       };
     } else {
       next.push(caption);
     }
   }
   return next.slice(-16);
-}
-
-function applyCaptionTranslation<T extends ConsultingCaptionTranslation>(
-  current: CallCaptionViewModel[],
-  translation: T,
-) {
-  return current.map((caption) =>
-    caption.resultId === translation.resultId
-      ? {
-          ...caption,
-          sourceLanguageCode: translation.sourceLanguageCode,
-          targetLanguageCode: translation.targetLanguageCode,
-          translatedContent: translation.translatedContent,
-        }
-      : caption,
-  );
 }
 
 function normalizeTranscriptLanguageCode(value?: string): ConsultingCallLanguageCode | null {
@@ -1160,10 +1069,6 @@ function getCaptionSpeakerLabel(externalUserId?: string) {
   if (externalUserId?.startsWith("customer:")) return "고객";
   if (externalUserId?.startsWith("partner:")) return "상담사";
   return "참가자";
-}
-
-function getRealtimeParticipantType(user: { role?: string } | null): ConsultingParticipantType {
-  return user?.role === "admin" || user?.role === "operator" ? "operator" : "expert";
 }
 
 function CalendarViewRenderer({

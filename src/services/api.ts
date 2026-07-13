@@ -32,7 +32,6 @@ import type {
   WorkspaceScope,
   PartnerType,
   ConsultingMode,
-  ConsultingCaptionTranslation,
   ConsultingCallJoinResult,
   ConsultingCallLanguageCode,
   ConsultingCallState,
@@ -1401,7 +1400,6 @@ function normalizeCallTranscription(value: unknown): ConsultingCallTranscription
   const raw = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
   return {
     enabled: Boolean(raw.enabled),
-    translationEnabled: Boolean(raw.translationEnabled),
     status: normalizeCallTranscriptionStatus(raw.status),
     mode: normalizeCallTranscriptionMode(raw.mode),
     languageCode: normalizeCallLanguageCode(raw.languageCode),
@@ -1459,18 +1457,6 @@ function normalizeCallJoinResult(value: unknown, bookingId: string): ConsultingC
     transcription,
     transcriptionStatus: normalizeCallTranscriptionStatus(raw.transcriptionStatus ?? transcription.status),
     transcriptionMode: normalizeCallTranscriptionMode(raw.transcriptionMode ?? transcription.mode),
-  };
-}
-
-function normalizeCaptionTranslation(value: unknown): ConsultingCaptionTranslation {
-  const raw = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-  const sourceLanguageCode = normalizeCallLanguageCode(raw.sourceLanguageCode);
-  const targetLanguageCode = raw.targetLanguageCode === "en" ? "en" : "ko";
-  return {
-    resultId: String(raw.resultId ?? ""),
-    sourceLanguageCode: sourceLanguageCode ?? "ko-KR",
-    targetLanguageCode,
-    translatedContent: String(raw.translatedContent ?? ""),
   };
 }
 
@@ -1559,35 +1545,6 @@ export async function stopBookingCallTranscription(bookingId: string, user?: Aut
   await delay(120);
   findBooking(bookingId, user);
   return normalizeCallState({ bookingId, chimeEnabled: false, status: "not_started" }, bookingId);
-}
-
-export async function translateBookingCallCaption(
-  bookingId: string,
-  payload: {
-    resultId: string;
-    sourceLanguageCode: ConsultingCallLanguageCode;
-    content: string;
-  },
-  user?: AuthUser,
-): Promise<ConsultingCaptionTranslation> {
-  if (shouldUsePartnerApi(user)) {
-    const data = await requestPartnerJson<{ resultId?: string; sourceLanguageCode?: ConsultingCallLanguageCode; targetLanguageCode?: "ko" | "en"; translatedContent?: string }>(
-      `/bookings/${encodeURIComponent(bookingId)}/call/captions/translate`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-      },
-    );
-    return normalizeCaptionTranslation(data);
-  }
-  await delay(120);
-  findBooking(bookingId, user);
-  return normalizeCaptionTranslation({
-    resultId: payload.resultId,
-    sourceLanguageCode: payload.sourceLanguageCode,
-    targetLanguageCode: payload.sourceLanguageCode === "ko-KR" ? "en" : "ko",
-    translatedContent: payload.content,
-  });
 }
 
 export async function getSharedReports(customerId?: string, user?: AuthUser): Promise<SharedReport[]> {
