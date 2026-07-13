@@ -40,6 +40,7 @@ import type {
   ConsultingCallTranscriptionMode,
   ConsultingCallTranscriptionStatus,
 } from "../types/domain";
+import { isBookingVisibleInChat } from "./chatVisibility";
 
 const delay = (ms = 180) => new Promise((resolve) => window.setTimeout(resolve, ms));
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -1193,16 +1194,24 @@ export async function getCustomerDetail(customerId: string, user?: AuthUser): Pr
 export async function getChatThreads(user?: AuthUser): Promise<ChatThreadDetail[]> {
   if (shouldUsePartnerApi(user)) {
     const data = await requestPartnerJson<{ threads: ChatThreadDetail[] }>("/chat/threads");
-    data.threads.forEach(rememberChatDetail);
-    return clone(data.threads);
+    const visibleThreads = data.threads.filter((detail) => isBookingVisibleInChat(detail.booking));
+    visibleThreads.forEach(rememberChatDetail);
+    return clone(visibleThreads);
   }
   await delay();
-  return clone(applyChatUserScope(chatThreads, user).map(makeChatThreadDetail));
+  return clone(
+    applyChatUserScope(chatThreads, user)
+      .map(makeChatThreadDetail)
+      .filter((detail) => isBookingVisibleInChat(detail.booking)),
+  );
 }
 
 export async function getChatThreadDetail(threadId: string, user?: AuthUser): Promise<ChatThreadDetail> {
   if (shouldUsePartnerApi(user)) {
     const data = await requestPartnerJson<{ detail: ChatThreadDetail }>(`/chat/threads/${encodeURIComponent(threadId)}`);
+    if (!isBookingVisibleInChat(data.detail.booking)) {
+      throw new Error("예약 확정 후 채팅을 이용할 수 있습니다.");
+    }
     rememberChatDetail(data.detail);
     return clone(data.detail);
   }

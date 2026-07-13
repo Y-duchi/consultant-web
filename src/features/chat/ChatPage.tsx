@@ -153,6 +153,10 @@ export function ChatPage() {
   }, [query, threadsQuery.data]);
 
   useEffect(() => {
+    if (activeThreadId && !filteredThreads.some((item) => item.thread.id === activeThreadId)) {
+      setActiveThreadId(null);
+      return;
+    }
     if (!activeThreadId && filteredThreads.length > 0) {
       const requestedThread = requestedBookingId
         ? filteredThreads.find((item) => item.booking?.id === requestedBookingId)
@@ -498,7 +502,7 @@ export function ChatPage() {
         <PageHeader
           eyebrow="Communication"
           title="고객 대화"
-          description="예약 신청 후 생성된 채팅방에서 고객 문의, 선결제 또는 예약금 입금 확인, 앱 얼굴 리포트와 내부 메모를 함께 보며 응대합니다."
+          description="확정된 예약의 고객 채팅과 앱 얼굴 리포트, 내부 메모를 함께 보며 상담을 이어갑니다."
         />
         {realtimeNotice ? (
           <div className="realtime-toast" role="status">
