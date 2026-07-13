@@ -2163,6 +2163,28 @@ a {
   width: 96px;
 }
 
+.profile-photo-fallback {
+  align-items: center;
+  background: #f1ddda;
+  color: #7c4a45;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 28px;
+  font-weight: 800;
+  justify-content: center;
+  letter-spacing: 0;
+}
+
+.profile-photo-fallback.is-sand {
+  background: #ede4d6;
+  color: #6b5e48;
+}
+
+.profile-photo-fallback.is-mauve {
+  background: #e6dce4;
+  color: #5f4a5c;
+}
+
 .profile-photo-editor .button {
   width: 100%;
 }

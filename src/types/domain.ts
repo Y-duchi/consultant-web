@@ -40,6 +40,8 @@ export interface Expert {
   email: string;
   phone: string;
   avatarUrl: string;
+  initials?: string;
+  avatarTone?: string;
   specialties: string[];
   categories: string[];
   introduction: string;
