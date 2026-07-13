@@ -35,7 +35,7 @@ class Settings(BaseSettings):
   s3_private_prefix: str = "private/"
   s3_user_reports_prefix: str = "user-reports/"
   s3_chat_attachments_prefix: str = "chat-attachments/"
-  s3_expert_profiles_prefix: str = "expert-profiles/"
+  s3_expert_profiles_prefix: str = "uploads/expert-profiles/"
   s3_business_verifications_prefix: str = "business-verifications/"
   s3_credentials_prefix: str = "credentials/"
 
@@ -43,6 +43,8 @@ class Settings(BaseSettings):
   email_from_address: str | None = None
   email_from_name: str = "AURA 파트너팀"
   email_reply_to_address: str | None = None
+  profile_change_admin_email: str | None = None
+  cdn_base_url: str = "https://d3t1pbvtir1lj.cloudfront.net"
   email_verification_secret: str | None = None
   email_verification_code_ttl_minutes: int = 10
   email_verification_token_ttl_minutes: int = 30
@@ -97,6 +99,10 @@ class Settings(BaseSettings):
   @property
   def email_configured(self) -> bool:
     return bool(self.email_from_address and self.email_verification_secret)
+
+  @property
+  def effective_profile_change_admin_email(self) -> str | None:
+    return self.profile_change_admin_email or self.email_reply_to_address or self.email_from_address
 
   @property
   def effective_chime_region(self) -> str:

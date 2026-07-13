@@ -10,6 +10,7 @@ import { LoadingState } from "../shared/ui/StateViews";
 const AdminBookingsPage = lazy(() => import("../features/admin/AdminBookingsPage").then((module) => ({ default: module.AdminBookingsPage })));
 const AdminDashboardPage = lazy(() => import("../features/admin/AdminDashboardPage").then((module) => ({ default: module.AdminDashboardPage })));
 const AdminPartnersPage = lazy(() => import("../features/admin/AdminPartnersPage").then((module) => ({ default: module.AdminPartnersPage })));
+const AdminProfileChangesPage = lazy(() => import("../features/admin/AdminProfileChangesPage").then((module) => ({ default: module.AdminProfileChangesPage })));
 const AdminSummaryJobsPage = lazy(() => import("../features/admin/AdminSummaryJobsPage").then((module) => ({ default: module.AdminSummaryJobsPage })));
 const ApplicationStatusPage = lazy(() => import("../features/applications/ApplicationStatusPage").then((module) => ({ default: module.ApplicationStatusPage })));
 const ApplicationsPage = lazy(() => import("../features/applications/ApplicationsPage").then((module) => ({ default: module.ApplicationsPage })));
@@ -66,6 +67,7 @@ export function App() {
         <Route index element={<AdminDashboardPage />} />
         <Route path="applications" element={<ApplicationsPage />} />
         <Route path="businesses" element={<AdminPartnersPage />} />
+        <Route path="profile-changes" element={<AdminProfileChangesPage />} />
         <Route path="bookings" element={<AdminBookingsPage />} />
         <Route path="summary-jobs" element={<AdminSummaryJobsPage />} />
       </Route>

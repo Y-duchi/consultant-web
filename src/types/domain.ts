@@ -4,6 +4,8 @@ export type WorkspaceScope = "expert_personal" | "business_operations";
 export type PartnerType = "business" | "freelancer";
 export type BusinessVerificationStatus = "not_submitted" | "submitted" | "approved" | "rejected" | "needs_update";
 export type PartnerApplicationStatus = "submitted" | "needs_update" | "approved" | "rejected";
+export type ProfileChangeTarget = "business" | "expert";
+export type ProfileChangeStatus = "submitted" | "needs_update" | "approved" | "rejected";
 export type PartnerApplicationDocumentType = "business_registration" | "beauty_license" | "additional_certificate";
 export type PartnerApplicationDocumentReviewStatus = "pending" | "verified" | "rejected";
 export type ConsultingMode = "online" | "offline";
@@ -107,6 +109,9 @@ export interface PartnerApplication {
   offlineAddress?: string;
   offlineDetailAddress?: string;
   offlineLocationNote?: string;
+  profileImageFileName?: string;
+  profileImageStorageKey?: string;
+  profileImageContentType?: string;
   status: PartnerApplicationStatus;
   submittedAt: string;
   updatedAt: string;
@@ -120,6 +125,28 @@ export interface PartnerApplication {
   lastEmailNotificationError?: string;
   lastEmailNotificationSentAt?: string;
   documents: PartnerApplicationDocument[];
+}
+
+export interface ProfileChangeRequest {
+  id: string;
+  accountId: string;
+  expertId: string;
+  requesterEmail: string;
+  targetType: ProfileChangeTarget;
+  status: ProfileChangeStatus;
+  currentSnapshot: Record<string, unknown>;
+  proposedChanges: Record<string, unknown>;
+  avatarFileName?: string;
+  avatarContentType?: string;
+  reviewMemo?: string;
+  reviewerName?: string;
+  submittedAt: string;
+  updatedAt: string;
+  reviewedAt?: string;
+  lastEmailNotificationType?: string;
+  lastEmailNotificationStatus?: "sent" | "failed";
+  lastEmailNotificationError?: string;
+  lastEmailNotificationSentAt?: string;
 }
 
 export interface PartnerAccount {

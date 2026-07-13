@@ -7,6 +7,7 @@ import {
   requestPartnerEmailVerification,
   submitPartnerApplication,
   uploadPartnerApplicationDocument,
+  uploadPartnerApplicationProfileImage,
 } from "../../services/api";
 import { PartnerApplicationStatusBadge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
@@ -49,6 +50,7 @@ export function ApplyPage() {
   const [offlineDetailAddress, setOfflineDetailAddress] = useState("3층 AURA 상담룸");
   const [offlineLocationNote, setOfflineLocationNote] = useState("성수역 3번 출구 도보 4분, 건물 뒤편 유료 주차 가능");
   const [businessRegistrationFile, setBusinessRegistrationFile] = useState<File | null>(null);
+  const [profileImageFile, setProfileImageFile] = useState<File | null>(null);
   const [beautyLicenseFile, setBeautyLicenseFile] = useState<File | null>(null);
   const [additionalCertificateFiles, setAdditionalCertificateFiles] = useState<File[]>([]);
   const [isSubmitting, setSubmitting] = useState(false);
@@ -60,7 +62,7 @@ export function ApplyPage() {
   const businessRegistrationFileName = businessRegistrationFile?.name ?? "";
   const beautyLicenseFileName = beautyLicenseFile?.name ?? "";
   const additionalCertificateFileNames = additionalCertificateFiles.map((file) => file.name);
-  const requiredDocumentsReady = Boolean(businessRegistrationFile);
+  const requiredDocumentsReady = Boolean(businessRegistrationFile && profileImageFile);
   const requiredPricesReady = (
     (!hasOnlineConsulting || (onlinePrice30Min !== "" && onlinePrice60Min !== ""))
     && (!hasOfflineConsulting || (offlinePrice30Min !== "" && offlinePrice60Min !== ""))
@@ -115,11 +117,12 @@ export function ApplyPage() {
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!canSubmit || !businessRegistrationFile) return;
+    if (!canSubmit || !businessRegistrationFile || !profileImageFile) return;
     setSubmitting(true);
     setSubmissionError("");
     try {
-      const [businessRegistrationStorageKey, beautyLicenseStorageKey, additionalCertificateStorageKeys] = await Promise.all([
+      const [profileImageStorageKey, businessRegistrationStorageKey, beautyLicenseStorageKey, additionalCertificateStorageKeys] = await Promise.all([
+        uploadPartnerApplicationProfileImage(profileImageFile),
         uploadPartnerApplicationDocument(businessRegistrationFile, "business_registration"),
         beautyLicenseFile
           ? uploadPartnerApplicationDocument(beautyLicenseFile, "beauty_license")
@@ -149,6 +152,9 @@ export function ApplyPage() {
         offlineAddress: hasOfflineConsulting ? offlineAddress : undefined,
         offlineDetailAddress: hasOfflineConsulting ? offlineDetailAddress : undefined,
         offlineLocationNote: hasOfflineConsulting ? offlineLocationNote : undefined,
+        profileImageFileName: profileImageFile.name,
+        profileImageStorageKey,
+        profileImageContentType: profileImageFile.type,
         businessRegistrationFileName,
         businessRegistrationStorageKey,
         beautyLicenseFileName,
@@ -350,6 +356,9 @@ export function ApplyPage() {
           </div>
 
           <div className="document-upload-grid">
+            <Field label="프로필 사진" required>
+              <input className="control" type="file" accept="image/jpeg,image/png,image/webp" required onChange={updateFile(setProfileImageFile)} />
+            </Field>
             <Field label="사업자등록증 PDF" required>
               <input className="control" type="file" accept="application/pdf" required onChange={updateFile(setBusinessRegistrationFile)} />
             </Field>

@@ -74,6 +74,9 @@ class PartnerApplication(BaseModel):
   offline_address: Optional[str] = None
   offline_detail_address: Optional[str] = None
   offline_location_note: Optional[str] = None
+  profile_image_file_name: Optional[str] = None
+  profile_image_storage_key: Optional[str] = None
+  profile_image_content_type: Optional[str] = None
   status: PartnerApplicationStatus
   submitted_at: str
   updated_at: str
@@ -128,6 +131,9 @@ class PartnerApplicationCreate(BaseModel):
   offline_address: Optional[str] = None
   offline_detail_address: Optional[str] = None
   offline_location_note: Optional[str] = None
+  profile_image_file_name: str = Field(min_length=1)
+  profile_image_storage_key: str = Field(min_length=1)
+  profile_image_content_type: str = Field(pattern=r"^image/(jpeg|png|webp)$")
   business_registration_file_name: Optional[str] = Field(default=None, validate_default=True)
   business_registration_storage_key: Optional[str] = None
   beauty_license_file_name: Optional[str] = None
@@ -145,6 +151,8 @@ class PartnerApplicationCreate(BaseModel):
 
   @model_validator(mode="after")
   def validate_document_storage_keys(self):
+    if not self.profile_image_storage_key.strip():
+      raise ValueError("프로필 사진 업로드를 완료해 주세요.")
     if not (self.business_registration_storage_key or "").strip():
       raise ValueError("사업자등록증 파일 업로드를 완료해 주세요.")
     if bool((self.beauty_license_file_name or "").strip()) != bool((self.beauty_license_storage_key or "").strip()):
@@ -162,6 +170,12 @@ class PartnerDocumentUploadRequest(BaseModel):
   document_type: PartnerApplicationDocumentType
   file_name: str = Field(min_length=1)
   content_type: str = Field(pattern="^application/pdf$")
+  size_bytes: int = Field(gt=0, le=10 * 1024 * 1024)
+
+
+class PartnerProfileImageUploadRequest(BaseModel):
+  file_name: str = Field(min_length=1, max_length=255)
+  content_type: str = Field(pattern=r"^image/(jpeg|png|webp)$")
   size_bytes: int = Field(gt=0, le=10 * 1024 * 1024)
 
 

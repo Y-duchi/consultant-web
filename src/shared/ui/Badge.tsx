@@ -4,6 +4,7 @@ import type {
   ExposureStatus,
   PartnerApplicationDocumentReviewStatus,
   PartnerApplicationStatus,
+  ProfileChangeStatus,
   PaymentStatus,
   ReviewStatus,
 } from "../../types/domain";
@@ -13,6 +14,7 @@ import {
   exposureStatusLabel,
   partnerApplicationDocumentReviewStatusLabel,
   partnerApplicationStatusLabel,
+  profileChangeStatusLabel,
   paymentStatusLabel,
   reviewStatusLabel,
 } from "../utils/format";
@@ -92,6 +94,16 @@ export function PartnerApplicationStatusBadge({ status }: { status: PartnerAppli
     rejected: "danger",
   };
   return <Badge tone={tone[status]}>{partnerApplicationStatusLabel[status]}</Badge>;
+}
+
+export function ProfileChangeStatusBadge({ status }: { status: ProfileChangeStatus }) {
+  const tone: Record<ProfileChangeStatus, BadgeTone> = {
+    submitted: "warning",
+    needs_update: "info",
+    approved: "success",
+    rejected: "danger",
+  };
+  return <Badge tone={tone[status]}>{profileChangeStatusLabel[status]}</Badge>;
 }
 
 export function PartnerApplicationDocumentReviewBadge({ status }: { status: PartnerApplicationDocumentReviewStatus }) {

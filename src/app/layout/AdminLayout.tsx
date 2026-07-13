@@ -3,6 +3,7 @@ import {
   BriefcaseBusiness,
   CalendarDays,
   FileCheck2,
+  FilePenLine,
   LayoutDashboard,
   LogOut,
   Sparkles,
@@ -15,6 +16,7 @@ const navItems = [
   { to: "/admin", label: "운영 대시보드", icon: LayoutDashboard, end: true },
   { to: "/admin/applications", label: "입점 심사", icon: FileCheck2 },
   { to: "/admin/businesses", label: "업체/전문가", icon: BriefcaseBusiness },
+  { to: "/admin/profile-changes", label: "프로필 변경 심사", icon: FilePenLine },
   { to: "/admin/bookings", label: "전체 예약", icon: CalendarDays },
   { to: "/admin/summary-jobs", label: "AI 요약 상태", icon: Sparkles },
 ];
@@ -23,6 +25,7 @@ const pageTitle: Record<string, string> = {
   "/admin": "플랫폼 운영 대시보드",
   "/admin/applications": "입점 심사",
   "/admin/businesses": "업체/전문가 목록",
+  "/admin/profile-changes": "프로필 변경 심사",
   "/admin/bookings": "전체 예약 관리",
   "/admin/summary-jobs": "AI 요약 작업 상태",
 };

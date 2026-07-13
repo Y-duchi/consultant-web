@@ -83,3 +83,25 @@ def create_presigned_download(settings: Settings, object_key: str, filename: str
     "access_url": access_url,
     "expires_in_minutes": max(1, expires_in // 60),
   }
+
+
+def create_presigned_view(settings: Settings, object_key: str, content_type: str, expires_in: int = 600):
+  access_url = create_s3_client(settings).generate_presigned_url(
+    "get_object",
+    Params={
+      "Bucket": settings.s3_bucket_name,
+      "Key": object_key,
+      "ResponseContentType": content_type,
+    },
+    ExpiresIn=expires_in,
+  )
+  return {
+    "access_url": access_url,
+    "expires_in_minutes": max(1, expires_in // 60),
+  }
+
+
+def inspect_uploaded_object(settings: Settings, bucket: str, object_key: str) -> dict[str, object]:
+  if bucket != settings.s3_bucket_name:
+    raise ValueError("Uploaded object bucket does not match the configured bucket.")
+  return create_s3_client(settings).head_object(Bucket=bucket, Key=object_key)

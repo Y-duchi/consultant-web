@@ -19,11 +19,12 @@ from fastapi import HTTPException
 
 from app.services.auth import PartnerPrincipal, validate_partner_principal
 from app.services.email import send_email
-from app.services.s3 import create_presigned_download
+from app.services.s3 import create_presigned_download, create_presigned_view
 from app.settings import get_settings
 
 
 _cached_dsn: str | None = None
+_profile_columns_ready = False
 _KST = timezone(timedelta(hours=9))
 _DAY_LABELS = ["월", "화", "수", "목", "금", "토", "일"]
 _DEFAULT_BOOKING_OPEN_MONTHS = 1
@@ -281,6 +282,9 @@ async def _ensure_partner_onboarding_schema(conn: asyncpg.Connection) -> None:
     "add column if not exists offline_address text",
     "add column if not exists offline_detail_address text",
     "add column if not exists offline_location_note text",
+    "add column if not exists profile_image_file_name text",
+    "add column if not exists profile_image_storage_key text",
+    "add column if not exists profile_image_content_type text",
     "add column if not exists business_registration_file_name text",
     "add column if not exists business_registration_storage_key text",
     "add column if not exists beauty_license_file_name text",
@@ -297,6 +301,7 @@ async def _ensure_partner_onboarding_schema(conn: asyncpg.Connection) -> None:
   )
   for definition in definitions:
     await conn.execute(f"alter table consulting_partner_applications {definition}")
+  await _ensure_partner_profile_columns(conn)
   await conn.execute(
     """
     create unique index if not exists uq_consulting_partner_applications_pending_email
@@ -304,6 +309,22 @@ async def _ensure_partner_onboarding_schema(conn: asyncpg.Connection) -> None:
     where status in ('submitted', 'needs_update')
     """
   )
+
+
+async def _ensure_partner_profile_columns(conn: asyncpg.Connection) -> None:
+  global _profile_columns_ready
+  if _profile_columns_ready:
+    return
+  for definition in (
+    "add column if not exists partner_type text not null default 'freelancer'",
+    "add column if not exists business_registration_number text",
+    "add column if not exists business_owner_name text",
+    "add column if not exists business_description text",
+    "add column if not exists phone text",
+    "add column if not exists business_address text",
+  ):
+    await conn.execute(f"alter table consulting_experts {definition}")
+  _profile_columns_ready = True
 
 
 async def _ensure_expert_schedule_columns(conn: asyncpg.Connection) -> None:
@@ -1211,7 +1232,8 @@ async def create_partner_application(payload: Any) -> dict[str, Any]:
         introduction, consulting_modes, price_30_min, price_60_min,
         online_price_30_min, online_price_60_min, offline_price_30_min,
         offline_price_60_min, offline_address, offline_detail_address,
-        offline_location_note, business_registration_file_name,
+        offline_location_note, profile_image_file_name, profile_image_storage_key,
+        profile_image_content_type, business_registration_file_name,
         business_registration_storage_key, beauty_license_file_name,
         beauty_license_storage_key, additional_certificate_file_names,
         additional_certificate_storage_keys
@@ -1221,10 +1243,11 @@ async def create_partner_application(payload: Any) -> dict[str, Any]:
         $12, $13::text[], $14, $15,
         $16, $17, $18,
         $19, $20, $21,
-        $22, $23,
-        $24, $25,
-        $26, $27::text[],
-        $28::text[]
+        $22, $23, $24,
+        $25, $26,
+        $27, $28,
+        $29, $30::text[],
+        $31::text[]
       where not exists (
         select 1 from consulting_partner_accounts where email = $1
       )
@@ -1251,6 +1274,9 @@ async def create_partner_application(payload: Any) -> dict[str, Any]:
         offline_address = excluded.offline_address,
         offline_detail_address = excluded.offline_detail_address,
         offline_location_note = excluded.offline_location_note,
+        profile_image_file_name = excluded.profile_image_file_name,
+        profile_image_storage_key = excluded.profile_image_storage_key,
+        profile_image_content_type = excluded.profile_image_content_type,
         business_registration_file_name = excluded.business_registration_file_name,
         business_registration_storage_key = excluded.business_registration_storage_key,
         beauty_license_file_name = excluded.beauty_license_file_name,
@@ -1285,6 +1311,9 @@ async def create_partner_application(payload: Any) -> dict[str, Any]:
       (payload.offline_address or "").strip() or None,
       (payload.offline_detail_address or "").strip() or None,
       (payload.offline_location_note or "").strip() or None,
+      payload.profile_image_file_name.strip(),
+      payload.profile_image_storage_key.strip(),
+      payload.profile_image_content_type.strip(),
       (payload.business_registration_file_name or "").strip() or None,
       (payload.business_registration_storage_key or "").strip() or None,
       (payload.beauty_license_file_name or "").strip() or None,
@@ -1422,11 +1451,14 @@ async def approve_partner_application(application_id: str, payload: Any) -> dict
           id, name, title, signature_line, initials, avatar_tone, studio_name,
           career_years, rating, review_count, session_count, rebook_rate,
           response_minutes, intro, availability_note, tags, certifications,
-          sort_order, is_active
+          sort_order, is_active, image_url, partner_type,
+          business_registration_number, business_owner_name, business_description,
+          phone, business_address
         ) values (
           $1, $2, $3, $4, $5, 'rose', $6,
           0, 0, 0, 0, 0,
-          30, $7, '', $8::text[], $9::text[], $10, true
+          30, $7, '', $8::text[], $9::text[], $10, true, $11, $12,
+          $13, $14, $15, $16, $17
         )
         """,
         expert_id,
@@ -1439,6 +1471,21 @@ async def approve_partner_application(application_id: str, payload: Any) -> dict
         _list(application.get("specialties")),
         certifications,
         sort_order or 0,
+        (
+          f"{get_settings().cdn_base_url.rstrip('/')}/{str(application.get('profile_image_storage_key')).lstrip('/')}"
+          if application.get("profile_image_storage_key") else None
+        ),
+        application.get("partner_type") or "freelancer",
+        application.get("business_registration_number"),
+        application.get("name"),
+        application.get("introduction") or "",
+        application.get("phone"),
+        " ".join(
+          value for value in (
+            str(application.get("offline_address") or "").strip(),
+            str(application.get("offline_detail_address") or "").strip(),
+          ) if value
+        ),
       )
       for category_id in _list(application.get("category_ids")) or ["personalColor"]:
         await conn.execute(
@@ -1680,6 +1727,7 @@ async def list_businesses() -> list[dict[str, Any]]:
 async def list_experts(principal: PartnerPrincipal | None = None) -> list[dict[str, Any]]:
   conn = await _connect()
   try:
+    await _ensure_partner_profile_columns(conn)
     args: list[Any] = []
     scope = ""
     if principal is not None and principal.business_id != "platform":
@@ -1693,7 +1741,15 @@ async def list_experts(principal: PartnerPrincipal | None = None) -> list[dict[s
       select e.id, e.name, e.title, e.signature_line, e.initials, e.avatar_tone, e.career_years,
              e.rating, e.review_count, e.session_count, e.rebook_rate, e.response_minutes,
              e.intro, e.availability_note, e.tags, e.certifications, e.is_active, e.sort_order,
-             e.created_at, e.updated_at, e.image_url, e.studio_name,
+             e.created_at, e.updated_at, e.image_url, e.studio_name, e.partner_type,
+             e.business_registration_number, e.business_owner_name, e.business_description,
+             e.phone, e.business_address,
+             coalesce((
+               select array_agg(c.label order by c.label)
+               from consulting_expert_categories ec
+               join consulting_categories c on c.id = ec.category_id
+               where ec.expert_id = e.id
+             ), '{{}}'::text[]) as category_labels,
              coalesce((select min(price) from consulting_expert_durations d where d.expert_id = e.id and d.minutes <= 30), 0)::int as price_30_min,
              coalesce((select min(price) from consulting_expert_durations d where d.expert_id = e.id and d.minutes >= 60), 0)::int as price_60_min
       from consulting_experts e
@@ -2684,10 +2740,10 @@ def _expert_from_row(row: asyncpg.Record) -> dict[str, Any]:
     "role_label": row["title"] or "뷰티 상담 전문가",
     "tagline": row["signature_line"] or row["availability_note"] or "AI 얼굴 리포트 기반 상담 전문가",
     "email": "",
-    "phone": "",
+    "phone": row.get("phone") or "",
     "avatar_url": row["image_url"] or "",
     "specialties": tags,
-    "categories": tags,
+    "categories": [str(item) for item in _list(row.get("category_labels"))],
     "introduction": row["intro"] or "",
     "years_of_experience": _int(row["career_years"]),
     "credentials": [
@@ -2710,21 +2766,35 @@ def _expert_from_row(row: asyncpg.Record) -> dict[str, Any]:
     "rebooking_rate": _int(row["rebook_rate"]),
     "response_within_minutes": _int(row["response_minutes"], 60),
     "studio_name": row["studio_name"],
+    "partner_type": row.get("partner_type") or "freelancer",
+    "business_registration_number": row.get("business_registration_number"),
+    "business_owner_name": row.get("business_owner_name") or row["name"],
+    "business_description": row.get("business_description") or row["intro"] or "",
+    "business_address": row.get("business_address") or "",
   }
 
 
 def _business_from_expert(expert: dict[str, Any]) -> dict[str, Any]:
   return {
     "id": expert["business_id"],
-    "partner_type": "freelancer",
+    "partner_type": expert.get("partner_type") or "freelancer",
     "name": expert.get("studio_name") or f"{expert['name']} 상담실",
-    "owner_name": expert["name"],
-    "business_registration_number": None,
+    "owner_name": expert.get("business_owner_name") or expert["name"],
+    "business_registration_number": expert.get("business_registration_number"),
     "phone": expert.get("phone") or "",
-    "address": "",
+    "address": expert.get("business_address") or "",
     "website": None,
-    "description": expert.get("introduction") or expert.get("tagline") or "",
-    "photos": [],
+    "description": expert.get("business_description") or expert.get("introduction") or expert.get("tagline") or "",
+    "photos": [
+      _attachment(
+        attachment_id=f"profile-{expert['id']}",
+        owner_id=expert["id"],
+        media_type="photo",
+        name="프로필 사진",
+        url=expert.get("avatar_url") or "",
+        uploaded_at=datetime.now(timezone.utc).isoformat(),
+      )
+    ] if expert.get("avatar_url") else [],
     "exposure_status": expert.get("exposure_status", "public"),
     "verification_status": "approved",
     "verification_documents": [],
@@ -3022,6 +3092,9 @@ def _application_from_row(row: asyncpg.Record) -> dict[str, Any]:
     "offline_address": row.get("offline_address"),
     "offline_detail_address": row.get("offline_detail_address"),
     "offline_location_note": row.get("offline_location_note"),
+    "profile_image_file_name": row.get("profile_image_file_name"),
+    "profile_image_storage_key": row.get("profile_image_storage_key"),
+    "profile_image_content_type": row.get("profile_image_content_type"),
     "status": row["status"],
     "submitted_at": _iso(submitted_at),
     "updated_at": _iso(row["updated_at"]),
@@ -3067,6 +3140,35 @@ async def create_partner_application_document_access(document_id: str) -> dict[s
     return {
       "document_id": document["id"],
       "file_name": document["file_name"],
+      **access,
+    }
+  finally:
+    await conn.close()
+
+
+async def create_partner_application_profile_image_access(application_id: str) -> dict[str, Any]:
+  conn = await _connect()
+  try:
+    await _ensure_partner_onboarding_schema(conn)
+    row = await conn.fetchrow(
+      """
+      select profile_image_file_name, profile_image_storage_key, profile_image_content_type
+      from consulting_partner_applications where id::text = $1
+      """,
+      application_id,
+    )
+    if row is None or not row.get("profile_image_storage_key"):
+      raise HTTPException(status_code=404, detail="제출된 프로필 사진을 찾을 수 없습니다.")
+    settings = get_settings()
+    if not settings.s3_configured:
+      raise HTTPException(status_code=503, detail="S3_BUCKET_NAME is not configured.")
+    access = create_presigned_view(
+      settings,
+      str(row["profile_image_storage_key"]),
+      str(row.get("profile_image_content_type") or "image/jpeg"),
+    )
+    return {
+      "file_name": str(row.get("profile_image_file_name") or "profile-image"),
       **access,
     }
   finally:

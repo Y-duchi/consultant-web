@@ -13,7 +13,14 @@ from app.schemas.partner_applications import (
   PartnerApplicationStatus,
   PartnerDocumentAccessResult,
 )
+from app.schemas.profile_changes import (
+  ProfileChangeDecision,
+  ProfileChangeRequest,
+  ProfileChangeStatus,
+  ProfileImageAccessResult,
+)
 from app.services import real_workspace
+from app.services import profile_changes
 from app.services.auth import get_admin_principal
 
 
@@ -69,6 +76,11 @@ async def create_admin_partner_application_document_access(document_id: str):
   return await real_workspace.create_partner_application_document_access(document_id)
 
 
+@router.post("/partner-applications/{application_id}/profile-image/access", response_model=ProfileImageAccessResult)
+async def create_admin_partner_application_profile_image_access(application_id: str):
+  return await real_workspace.create_partner_application_profile_image_access(application_id)
+
+
 def _application_status(application: object) -> str:
   if isinstance(application, dict):
     return str(application.get("status") or "")
@@ -84,6 +96,40 @@ async def list_admin_businesses():
 @router.get("/experts")
 async def list_admin_experts():
   return await real_workspace.list_experts()
+
+
+@router.get("/profile-change-requests", response_model=list[ProfileChangeRequest])
+async def list_admin_profile_change_requests(
+  status: Union[ProfileChangeStatus, str] = Query(default="all"),
+  query: Optional[str] = None,
+):
+  status_value = status.value if isinstance(status, ProfileChangeStatus) else str(status)
+  return await profile_changes.list_admin_profile_changes(status=status_value, query=query)
+
+
+@router.get("/profile-change-requests/{request_id}", response_model=ProfileChangeRequest)
+async def get_admin_profile_change_request(request_id: str):
+  return await profile_changes.get_admin_profile_change(request_id)
+
+
+@router.post("/profile-change-requests/{request_id}/avatar-access", response_model=ProfileImageAccessResult)
+async def get_admin_profile_change_avatar_access(request_id: str):
+  return await profile_changes.get_admin_avatar_access(request_id)
+
+
+@router.post("/profile-change-requests/{request_id}/approve", response_model=ProfileChangeRequest)
+async def approve_admin_profile_change_request(request_id: str, payload: ProfileChangeDecision):
+  return await profile_changes.decide_profile_change(request_id, "approved", payload)
+
+
+@router.post("/profile-change-requests/{request_id}/needs-update", response_model=ProfileChangeRequest)
+async def request_admin_profile_change_update(request_id: str, payload: ProfileChangeDecision):
+  return await profile_changes.decide_profile_change(request_id, "needs_update", payload)
+
+
+@router.post("/profile-change-requests/{request_id}/reject", response_model=ProfileChangeRequest)
+async def reject_admin_profile_change_request(request_id: str, payload: ProfileChangeDecision):
+  return await profile_changes.decide_profile_change(request_id, "rejected", payload)
 
 
 @router.get("/bookings")

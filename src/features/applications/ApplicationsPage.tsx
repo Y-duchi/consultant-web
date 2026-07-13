@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Copy, Eye, FileText, KeyRound, MailCheck, RefreshCw, Search, XCircle } from "lucide-react";
+import { CheckCircle2, Copy, Eye, FileText, Image, KeyRound, MailCheck, RefreshCw, Search, XCircle } from "lucide-react";
 import {
   approvePartnerApplication,
   getPartnerApplicationDetail,
   getPartnerApplications,
   preparePartnerApplicationDocumentAccess,
+  preparePartnerApplicationProfileImageAccess,
   reissuePartnerApplicationCredentials,
   updatePartnerApplicationStatus,
   type PartnerApplicationApprovalResult,
   type PartnerDocumentAccessResult,
+  type ProfileImageAccessResult,
 } from "../../services/api";
 import { Badge, PartnerApplicationDocumentReviewBadge, PartnerApplicationStatusBadge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
@@ -47,6 +49,7 @@ export function ApplicationsPage() {
   const [generatedMember, setGeneratedMember] = useState<PartnerBusinessMember | null>(null);
   const [documentAccess, setDocumentAccess] = useState<PartnerDocumentAccessResult | null>(null);
   const [documentAccessError, setDocumentAccessError] = useState("");
+  const [profileImageAccess, setProfileImageAccess] = useState<ProfileImageAccessResult | null>(null);
   const [credentialsCopied, setCredentialsCopied] = useState(false);
 
   const applicationsQuery = useQuery({
@@ -74,6 +77,7 @@ export function ApplicationsPage() {
     setGeneratedMember(null);
     setDocumentAccess(null);
     setDocumentAccessError("");
+    setProfileImageAccess(null);
     setCredentialsCopied(false);
   }, [selectedId]);
 
@@ -161,6 +165,15 @@ export function ApplicationsPage() {
     } catch (error) {
       previewWindow?.close();
       setDocumentAccessError(error instanceof Error ? error.message : "문서를 열지 못했습니다.");
+    }
+  };
+
+  const openProfileImage = async () => {
+    if (!selectedId) return;
+    try {
+      setProfileImageAccess(await preparePartnerApplicationProfileImageAccess(selectedId));
+    } catch (error) {
+      setDocumentAccessError(error instanceof Error ? error.message : "프로필 사진을 열지 못했습니다.");
     }
   };
 
@@ -337,6 +350,20 @@ export function ApplicationsPage() {
               <div className="section-title-row">
                 <h3>신청 정보</h3>
                 <PartnerApplicationStatusBadge status={selectedApplication.status} />
+              </div>
+              <div className="application-profile-image">
+                {profileImageAccess ? (
+                  <img src={profileImageAccess.accessUrl} alt={`${selectedApplication.ownerName} 프로필`} />
+                ) : (
+                  <div className="application-profile-placeholder"><Image size={24} /></div>
+                )}
+                <div className="cell-main">
+                  <strong>{selectedApplication.profileImageFileName || "프로필 사진"}</strong>
+                  <span>승인 시 고객 화면의 최초 프로필 사진으로 사용됩니다.</span>
+                </div>
+                <Button variant="secondary" icon={<Eye size={15} />} disabled={!selectedApplication.profileImageStorageKey} onClick={openProfileImage}>
+                  열람
+                </Button>
               </div>
               <dl className="detail-list">
                 <DetailRow label="유형">{selectedApplication.partnerType === "business" ? "사업자 업체" : "프리랜서 전문가"}</DetailRow>
