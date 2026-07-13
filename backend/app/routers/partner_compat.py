@@ -238,7 +238,7 @@ async def chat_threads(principal: PartnerPrincipal = Depends(get_compat_principa
     conversations.setdefault(booking.get("conversation_id") or booking["id"], []).append(booking)
 
   for conversation_bookings in conversations.values():
-    booking = conversation_bookings[0]
+    booking = real_workspace._latest_conversation_booking(conversation_bookings)
     if booking.get("expert_left_at"):
       continue
     customer = customers.get(booking["customer_id"])

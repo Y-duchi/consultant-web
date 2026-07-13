@@ -75,21 +75,21 @@ class PartnerChatThreadTests(unittest.IsolatedAsyncioTestCase):
   async def test_thread_list_groups_rebookings_by_conversation_and_hides_left_room(self) -> None:
     bookings = [
       {
-        "id": "booking-new",
-        "conversation_id": "conversation-open",
-        "customer_id": "customer-1",
-        "expert_id": "expert-1",
-        "status": "requested",
-        "requested_at": "2026-07-13T09:00:00+00:00",
-        "expert_read_at": None,
-      },
-      {
         "id": "booking-old",
         "conversation_id": "conversation-open",
         "customer_id": "customer-1",
         "expert_id": "expert-1",
         "status": "completed",
         "requested_at": "2026-07-01T09:00:00+00:00",
+        "expert_read_at": None,
+      },
+      {
+        "id": "booking-new",
+        "conversation_id": "conversation-open",
+        "customer_id": "customer-1",
+        "expert_id": "expert-1",
+        "status": "requested",
+        "requested_at": "2026-07-13T09:00:00+00:00",
         "expert_read_at": None,
       },
       {
@@ -126,6 +126,50 @@ class PartnerChatThreadTests(unittest.IsolatedAsyncioTestCase):
 
     self.assertEqual(len(response["data"]["threads"]), 1)
     self.assertEqual(response["data"]["threads"][0]["thread"]["id"], "thread-booking-new")
+
+  async def test_thread_detail_uses_latest_booking_when_opened_with_old_thread_id(self) -> None:
+    old_booking = {
+      "id": "booking-old",
+      "conversation_id": "conversation-open",
+      "customer_id": "customer-1",
+      "expert_id": "expert-1",
+      "status": "completed",
+      "requested_at": "2026-07-01T09:00:00+00:00",
+    }
+    new_booking = {
+      "id": "booking-new",
+      "conversation_id": "conversation-open",
+      "customer_id": "customer-1",
+      "expert_id": "expert-1",
+      "status": "confirmed",
+      "requested_at": "2026-07-13T09:00:00+00:00",
+    }
+
+    with (
+      patch.object(real_workspace, "get_partner_booking", AsyncMock(return_value=old_booking)),
+      patch.object(real_workspace, "_conversation_bookings", AsyncMock(return_value=[old_booking, new_booking])),
+      patch.object(
+        real_workspace,
+        "list_chat_messages_for_bookings",
+        AsyncMock(return_value={"booking-old": [], "booking-new": []}),
+      ),
+      patch.object(
+        real_workspace,
+        "get_partner_customer",
+        AsyncMock(return_value={"customer": {"id": "customer-1"}}),
+      ),
+      patch.object(real_workspace, "get_expert", AsyncMock(return_value={"id": "expert-1"})),
+      patch.object(real_workspace, "list_shared_reports", AsyncMock(return_value=[])),
+      patch.object(
+        real_workspace,
+        "_thread_from_booking",
+        AsyncMock(return_value={"id": "thread-booking-new"}),
+      ),
+    ):
+      detail = await real_workspace.get_chat_thread_detail("thread-booking-old", object())  # type: ignore[arg-type]
+
+    self.assertEqual(detail["booking"]["id"], "booking-new")
+    self.assertEqual(detail["thread"]["id"], "thread-booking-new")
 
   async def test_confirm_booking_marks_payment_and_status_in_one_operation(self) -> None:
     booking = {
