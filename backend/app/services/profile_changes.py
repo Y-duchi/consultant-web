@@ -410,7 +410,7 @@ async def _profile_context(conn, account_id: str, expert_id: str):
       coalesce((select min(price) from consulting_expert_durations d where d.expert_id = e.id and d.minutes <= 30), 0)::int as price_30_min,
       coalesce((select min(price) from consulting_expert_durations d where d.expert_id = e.id and d.minutes >= 60), 0)::int as price_60_min,
       coalesce((
-        select array_agg(c.label order by c.label)
+        select array_agg(c.title order by c.title)
         from consulting_expert_categories ec
         join consulting_categories c on c.id = ec.category_id
         where ec.expert_id = e.id
