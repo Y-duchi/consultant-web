@@ -177,7 +177,7 @@ export function ChatPage() {
   );
   const socketBookingId = useMemo(() => {
     const override = new URLSearchParams(window.location.search).get("bookingId")?.trim();
-    return override || activeBookingId;
+    return activeBookingId || override;
   }, [activeBookingId]);
   useEffect(() => {
     setLiveMessages(detail?.messages ?? []);

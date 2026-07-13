@@ -2153,12 +2153,24 @@ async def get_partner_customer(customer_id: str, principal: PartnerPrincipal) ->
 
 async def list_partner_chats(principal: PartnerPrincipal) -> list[dict[str, Any]]:
   bookings = await list_partner_bookings(principal)
-  latest_by_conversation: dict[str, dict[str, Any]] = {}
+  conversations: dict[str, list[dict[str, Any]]] = {}
   for booking in bookings:
     if booking.get("expert_left_at"):
       continue
-    latest_by_conversation.setdefault(booking.get("conversation_id") or booking["id"], booking)
-  return [await _thread_from_booking(booking) for booking in latest_by_conversation.values()]
+    conversations.setdefault(booking.get("conversation_id") or booking["id"], []).append(booking)
+  return [
+    await _thread_from_booking(_latest_conversation_booking(conversation_bookings))
+    for conversation_bookings in conversations.values()
+  ]
+
+
+def _latest_conversation_booking(bookings: list[dict[str, Any]]) -> dict[str, Any]:
+  if not bookings:
+    raise ValueError("A conversation must contain at least one booking.")
+  return max(
+    bookings,
+    key=lambda booking: (_parse_iso_datetime(booking.get("requested_at")), str(booking.get("id") or "")),
+  )
 
 
 async def _conversation_bookings(booking: dict[str, Any], principal: PartnerPrincipal) -> list[dict[str, Any]]:
@@ -2176,7 +2188,7 @@ async def get_chat_thread_detail(thread_id: str, principal: PartnerPrincipal) ->
   booking = await get_partner_booking(booking_id, principal)
   conversation_bookings = await _conversation_bookings(booking, principal)
   if conversation_bookings:
-    booking = conversation_bookings[0]
+    booking = _latest_conversation_booking(conversation_bookings)
     thread_id = f"thread-{booking['id']}"
   conversation_booking_ids = [item["id"] for item in conversation_bookings]
   messages_by_booking = await list_chat_messages_for_bookings(conversation_booking_ids)
