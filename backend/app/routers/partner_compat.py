@@ -8,7 +8,9 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 
+from app.schemas.profile_changes import ProfileAvatarUploadRequest
 from app.services import partner_call, real_workspace
+from app.services import profile_changes
 from app.services.auth import PartnerPrincipal
 
 
@@ -64,6 +66,24 @@ async def business_profile(principal: PartnerPrincipal = Depends(get_compat_prin
   settings = await real_workspace.get_partner_settings(principal)
   business["default_operating_hours"] = settings["operating_hours"]
   return ok({"business": business})
+
+
+@router.get("/profile-change-requests")
+async def profile_change_requests(principal: PartnerPrincipal = Depends(get_compat_principal)):
+  return ok({"requests": await profile_changes.list_partner_profile_changes(principal)})
+
+
+@router.post("/profile-change-requests")
+async def submit_profile_change_request(payload: dict, principal: PartnerPrincipal = Depends(get_compat_principal)):
+  return ok({"request": await profile_changes.submit_profile_change(payload, principal)})
+
+
+@router.post("/profile-change-requests/avatar-upload")
+async def create_profile_change_avatar_upload(
+  payload: ProfileAvatarUploadRequest,
+  _principal: PartnerPrincipal = Depends(get_compat_principal),
+):
+  return ok({"upload": profile_changes.create_avatar_upload(payload.file_name, payload.content_type)})
 
 
 @router.get("/settings")

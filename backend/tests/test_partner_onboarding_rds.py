@@ -42,6 +42,9 @@ def application_row(**overrides):
     "offline_address": None,
     "offline_detail_address": None,
     "offline_location_note": None,
+    "profile_image_file_name": "profile.jpg",
+    "profile_image_storage_key": "uploads/expert-profiles/profile.jpg",
+    "profile_image_content_type": "image/jpeg",
     "business_registration_file_name": "사업자등록증.pdf",
     "business_registration_storage_key": "business-verifications/business.pdf",
     "beauty_license_file_name": "미용사면허증.pdf",
@@ -204,6 +207,9 @@ async def test_public_application_is_saved_to_rds(monkeypatch: pytest.MonkeyPatc
     price_60_min=34000,
     business_registration_file_name="사업자등록증.pdf",
     business_registration_storage_key="business-verifications/business.pdf",
+    profile_image_file_name="profile.jpg",
+    profile_image_storage_key="uploads/expert-profiles/profile.jpg",
+    profile_image_content_type="image/jpeg",
   )
 
   application = await real_workspace.create_partner_application(payload)
@@ -252,7 +258,7 @@ async def test_email_verification_rejects_existing_application(
   assert connection.fetchrow_calls[0][1] == ("artist@example.com",)
 
 
-def test_application_requires_only_business_registration_document() -> None:
+def test_application_requires_profile_image_and_business_registration_document() -> None:
   common_payload = {
     "partner_type": "freelancer",
     "business_name": "아티스트 스튜디오",
@@ -262,6 +268,9 @@ def test_application_requires_only_business_registration_document() -> None:
     "email_verification_token": "test-verification-token-that-is-long-enough",
     "price_30_min": 19000,
     "price_60_min": 34000,
+    "profile_image_file_name": "profile.jpg",
+    "profile_image_storage_key": "uploads/expert-profiles/profile.jpg",
+    "profile_image_content_type": "image/jpeg",
   }
 
   application = PartnerApplicationCreate(
@@ -273,6 +282,13 @@ def test_application_requires_only_business_registration_document() -> None:
   assert application.business_registration_storage_key == "business-verifications/business.pdf"
   assert application.beauty_license_file_name is None
   assert application.additional_certificate_file_names == []
+
+  with pytest.raises(ValidationError, match="profile_image_file_name"):
+    PartnerApplicationCreate(
+      **{key: value for key, value in common_payload.items() if not key.startswith("profile_image")},
+      business_registration_file_name="사업자등록증.pdf",
+      business_registration_storage_key="business-verifications/business.pdf",
+    )
 
   with pytest.raises(ValidationError, match="사업자등록증 PDF는 필수입니다"):
     PartnerApplicationCreate(**common_payload)
@@ -345,6 +361,8 @@ async def test_approval_creates_expert_account_and_temporary_password(monkeypatc
   )
   assert any("insert into consulting_experts" in query for query, _ in connection.execute_calls)
   assert any("insert into consulting_expert_durations" in query for query, _ in connection.execute_calls)
+  expert_insert = next(args for query, args in connection.execute_calls if "insert into consulting_experts" in query)
+  assert expert_insert[10] == "https://d3t1pbvtir1lj.cloudfront.net/uploads/expert-profiles/profile.jpg"
 
 
 @pytest.mark.asyncio

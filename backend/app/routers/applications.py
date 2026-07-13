@@ -19,6 +19,7 @@ from app.schemas.partner_applications import (
   PartnerEmailVerificationResult,
   PartnerDocumentAccessResult,
   PartnerDocumentUploadRequest,
+  PartnerProfileImageUploadRequest,
 )
 from app.services import real_workspace
 from app.services.auth import get_admin_principal
@@ -70,6 +71,14 @@ async def create_partner_application_document_upload(payload: PartnerDocumentUpl
   return create_presigned_upload(settings, folder, payload.file_name, payload.content_type)
 
 
+@router.post("/profile-image/presigned-upload")
+async def create_partner_application_profile_image_upload(payload: PartnerProfileImageUploadRequest):
+  settings = get_settings()
+  if not settings.s3_configured:
+    raise HTTPException(status_code=503, detail="S3_BUCKET_NAME is not configured.")
+  return create_presigned_upload(settings, "expert-profiles", payload.file_name, payload.content_type)
+
+
 @router.get("/{application_id}/status", response_model=PartnerApplicationStatusResult)
 async def get_partner_application_status(application_id: str):
   detail = await real_workspace.get_partner_application_detail(application_id)
@@ -79,6 +88,11 @@ async def get_partner_application_status(application_id: str):
 @router.get("/{application_id}", response_model=PartnerApplicationDetail)
 async def get_partner_application(application_id: str, _admin=Depends(get_admin_principal)):
   return await real_workspace.get_partner_application_detail(application_id)
+
+
+@router.post("/{application_id}/profile-image/access")
+async def create_partner_application_profile_image_access(application_id: str, _admin=Depends(get_admin_principal)):
+  return await real_workspace.create_partner_application_profile_image_access(application_id)
 
 
 @router.post("/{application_id}/needs-update", response_model=PartnerApplication)

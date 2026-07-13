@@ -5,6 +5,7 @@ import type {
   PartnerApplicationDocumentReviewStatus,
   PartnerApplicationDocumentType,
   PartnerApplicationStatus,
+  ProfileChangeStatus,
   PaymentStatus,
   ReviewStatus,
   WorkspaceScope,
@@ -85,6 +86,13 @@ export const businessVerificationStatusLabel: Record<BusinessVerificationStatus,
 };
 
 export const partnerApplicationStatusLabel: Record<PartnerApplicationStatus, string> = {
+  submitted: "검토 대기",
+  needs_update: "보완 요청",
+  approved: "승인 완료",
+  rejected: "반려",
+};
+
+export const profileChangeStatusLabel: Record<ProfileChangeStatus, string> = {
   submitted: "검토 대기",
   needs_update: "보완 요청",
   approved: "승인 완료",

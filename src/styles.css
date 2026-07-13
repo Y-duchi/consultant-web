@@ -2923,6 +2923,97 @@ a {
   gap: 12px;
 }
 
+.profile-review-notice {
+  align-items: center;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 13px 14px;
+}
+
+.profile-review-notice.is-submitted,
+.profile-review-notice.is-needs_update {
+  background: var(--warning-soft);
+  border-left-color: var(--warning);
+}
+
+.profile-review-notice.is-approved {
+  background: var(--success-soft);
+  border-left-color: var(--success);
+}
+
+.profile-review-notice.is-rejected {
+  background: var(--danger-soft);
+  border-left-color: var(--danger);
+}
+
+.profile-review-notice > div {
+  display: grid;
+  gap: 3px;
+}
+
+.profile-review-notice span,
+.profile-review-notice p {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.profile-review-notice p {
+  grid-column: 1 / -1;
+}
+
+.profile-change-compare {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.profile-change-compare-head,
+.profile-change-compare-row {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 130px minmax(0, 1fr) minmax(0, 1fr);
+  padding: 12px 14px;
+}
+
+.profile-change-compare-head {
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.profile-change-compare-row {
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.profile-change-compare-row > span {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.profile-change-compare-row .is-proposed {
+  color: var(--primary-strong);
+  font-weight: 700;
+}
+
+.profile-change-avatar-preview {
+  aspect-ratio: 1;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-width: 320px;
+  object-fit: cover;
+  width: 100%;
+}
+
 .switch-row {
   display: flex;
   align-items: center;
@@ -3169,6 +3260,34 @@ a {
   font: inherit;
   font-weight: 700;
   cursor: pointer;
+}
+
+.application-profile-image {
+  align-items: center;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  padding: 12px;
+}
+
+.application-profile-image img,
+.application-profile-placeholder {
+  aspect-ratio: 1;
+  border-radius: 6px;
+  height: 72px;
+  object-fit: cover;
+  width: 72px;
+}
+
+.application-profile-placeholder {
+  align-items: center;
+  background: var(--surface-strong);
+  color: var(--text-muted);
+  display: flex;
+  justify-content: center;
 }
 
 .mode-option-grid {

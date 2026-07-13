@@ -21,6 +21,9 @@ import type {
   PartnerApplicationDocument,
   PartnerApplicationDocumentType,
   PartnerApplicationStatus,
+  ProfileChangeRequest,
+  ProfileChangeStatus,
+  ProfileChangeTarget,
   PartnerBusinessMember,
   OperatingHours,
   ManagerSettings,
@@ -451,6 +454,9 @@ export interface PartnerApplicationInput {
   offlineAddress?: string;
   offlineDetailAddress?: string;
   offlineLocationNote?: string;
+  profileImageFileName: string;
+  profileImageStorageKey: string;
+  profileImageContentType: string;
   businessRegistrationFileName?: string;
   businessRegistrationStorageKey?: string;
   beautyLicenseFileName?: string;
@@ -504,6 +510,22 @@ interface PartnerDocumentUploadResult {
   uploadUrl: string;
   method: string;
   contentType: string;
+}
+
+export interface ProfileImageAccessResult {
+  fileName: string;
+  accessUrl: string;
+  expiresInMinutes: number;
+}
+
+export interface ProfileChangeFilters {
+  query?: string;
+  status?: ProfileChangeStatus | "all";
+}
+
+export interface ProfileChangeDecisionRequest {
+  reviewMemo: string;
+  reviewerName?: string;
 }
 
 export interface BookingDetail {
@@ -685,6 +707,28 @@ export async function uploadPartnerApplicationDocument(file: File, documentType:
   return upload.objectKey;
 }
 
+export async function uploadPartnerApplicationProfileImage(file: File): Promise<string> {
+  validateProfileImage(file);
+  const raw = await requestPartnerApplicationJson<unknown>("/profile-image/presigned-upload", {
+    method: "POST",
+    body: JSON.stringify({
+      file_name: file.name || "profile-image",
+      content_type: file.type,
+      size_bytes: file.size,
+    }),
+  });
+  const upload = toCamelDeep(raw) as PartnerDocumentUploadResult;
+  const uploadResponse = await fetch(upload.uploadUrl, {
+    method: upload.method || "PUT",
+    headers: { "Content-Type": upload.contentType || file.type },
+    body: file,
+  });
+  if (!uploadResponse.ok) {
+    throw new Error("프로필 사진 업로드에 실패했습니다.");
+  }
+  return upload.objectKey;
+}
+
 export async function getPartnerApplications(filters: PartnerApplicationFilters = {}): Promise<PartnerApplication[]> {
   const raw = await requestAdminJson<unknown>(buildPartnerPath("/partner-applications", filters));
   const records = toCamelDeep(raw) as PartnerApplication[];
@@ -781,6 +825,44 @@ export async function getAdminExperts(): Promise<Expert[]> {
   const records = toCamelDeep(raw) as Expert[];
   experts = upsertById(experts, records);
   return clone(records);
+}
+
+export async function getAdminProfileChanges(filters: ProfileChangeFilters = {}): Promise<ProfileChangeRequest[]> {
+  const raw = await requestAdminJson<unknown>(buildPartnerPath("/profile-change-requests", filters));
+  return clone(toCamelDeep(raw) as ProfileChangeRequest[]);
+}
+
+export async function getAdminProfileChange(requestId: string): Promise<ProfileChangeRequest> {
+  const raw = await requestAdminJson<unknown>(`/profile-change-requests/${encodeURIComponent(requestId)}`);
+  return clone(toCamelDeep(raw) as ProfileChangeRequest);
+}
+
+export async function decideAdminProfileChange(
+  requestId: string,
+  action: "approve" | "needs-update" | "reject",
+  request: ProfileChangeDecisionRequest,
+): Promise<ProfileChangeRequest> {
+  const raw = await requestAdminJson<unknown>(
+    `/profile-change-requests/${encodeURIComponent(requestId)}/${action}`,
+    { method: "POST", body: JSON.stringify(toSnakeDeep(request)) },
+  );
+  return clone(toCamelDeep(raw) as ProfileChangeRequest);
+}
+
+export async function prepareProfileChangeAvatarAccess(requestId: string): Promise<ProfileImageAccessResult> {
+  const raw = await requestAdminJson<unknown>(
+    `/profile-change-requests/${encodeURIComponent(requestId)}/avatar-access`,
+    { method: "POST" },
+  );
+  return clone(toCamelDeep(raw) as ProfileImageAccessResult);
+}
+
+export async function preparePartnerApplicationProfileImageAccess(applicationId: string): Promise<ProfileImageAccessResult> {
+  const raw = await requestAdminJson<unknown>(
+    `/partner-applications/${encodeURIComponent(applicationId)}/profile-image/access`,
+    { method: "POST" },
+  );
+  return clone(toCamelDeep(raw) as ProfileImageAccessResult);
 }
 
 export async function getAdminBookings(filters: BookingFilters = {}): Promise<Booking[]> {
@@ -1716,6 +1798,61 @@ export async function updateBusinessProfile(patch: Partial<BusinessProfile>, use
   return clone(businessProfiles[targetIndex]);
 }
 
+export async function getProfileChangeRequests(user?: AuthUser): Promise<ProfileChangeRequest[]> {
+  if (!shouldUsePartnerApi(user)) return [];
+  const data = await requestPartnerJson<{ requests: ProfileChangeRequest[] }>("/profile-change-requests");
+  return clone(data.requests);
+}
+
+export async function submitProfileChangeRequest(
+  targetType: ProfileChangeTarget,
+  expertId: string,
+  proposedChanges: Record<string, unknown>,
+  avatarFile?: File | null,
+  user?: AuthUser,
+): Promise<ProfileChangeRequest> {
+  if (!shouldUsePartnerApi(user)) {
+    throw new Error("로그인한 파트너 계정에서 변경 심사를 요청해 주세요.");
+  }
+  let avatarUpload: {
+    bucket: string;
+    objectKey: string;
+    fileName: string;
+    contentType: string;
+  } | undefined;
+  if (avatarFile) {
+    validateProfileImage(avatarFile);
+    const { upload } = await requestPartnerJson<{ upload: PartnerUpload }>(
+      "/profile-change-requests/avatar-upload",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          file_name: avatarFile.name || "profile-image",
+          content_type: avatarFile.type,
+          size_bytes: avatarFile.size,
+        }),
+      },
+    );
+    const uploadResponse = await fetch(upload.uploadUrl, {
+      method: upload.method || "PUT",
+      headers: { "Content-Type": avatarFile.type },
+      body: avatarFile,
+    });
+    if (!uploadResponse.ok) throw new Error("프로필 사진 업로드에 실패했습니다.");
+    avatarUpload = {
+      bucket: upload.bucket,
+      objectKey: upload.objectKey,
+      fileName: avatarFile.name || "profile-image",
+      contentType: avatarFile.type,
+    };
+  }
+  const data = await requestPartnerJson<{ request: ProfileChangeRequest }>("/profile-change-requests", {
+    method: "POST",
+    body: JSON.stringify({ targetType, expertId, proposedChanges, avatarUpload }),
+  });
+  return clone(data.request);
+}
+
 export async function getExperts(user?: AuthUser): Promise<Expert[]> {
   if (shouldUsePartnerApi(user)) {
     const data = await requestPartnerJson<{ experts: Expert[] }>("/experts");
@@ -1745,13 +1882,17 @@ export async function updateExpertProfile(expertId: string, patch: Partial<Exper
 const PROFILE_AVATAR_MAX_BYTES = 10 * 1024 * 1024;
 const PROFILE_AVATAR_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
-export async function uploadExpertAvatar(expertId: string, file: File, user?: AuthUser): Promise<Expert> {
+function validateProfileImage(file: File) {
   if (!PROFILE_AVATAR_CONTENT_TYPES.has(file.type)) {
     throw new Error("JPG, PNG 또는 WebP 형식의 사진을 선택해 주세요.");
   }
   if (file.size <= 0 || file.size > PROFILE_AVATAR_MAX_BYTES) {
     throw new Error("10MB 이하의 사진을 선택해 주세요.");
   }
+}
+
+export async function uploadExpertAvatar(expertId: string, file: File, user?: AuthUser): Promise<Expert> {
+  validateProfileImage(file);
 
   if (shouldUsePartnerApi(user)) {
     const { upload } = await requestPartnerJson<{ upload: PartnerUpload }>(
