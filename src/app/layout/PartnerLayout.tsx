@@ -28,7 +28,7 @@ import {
   isPartnerEventInScope,
 } from "../../services/partnerEvents";
 import { Button } from "../../shared/ui/Button";
-import { formatTime, workspaceScopeLabel } from "../../shared/utils/format";
+import { formatTime } from "../../shared/utils/format";
 import type { Booking, BookingStatus, ChatMessage } from "../../types/domain";
 
 const navItems = [
@@ -41,17 +41,6 @@ const navItems = [
   { to: "/workspace/profile", label: "프로필/가격", icon: Building2 },
   { to: "/workspace/settings", label: "설정", icon: Settings },
 ];
-
-const pageTitle: Record<string, string> = {
-  "/workspace": "내 업체 운영 현황",
-  "/workspace/bookings": "내 예약 관리",
-  "/workspace/customers": "내 고객 관리",
-  "/workspace/chat": "내 고객 대화",
-  "/workspace/completion": "상담 요약 및 처방 노트",
-  "/workspace/reviews": "내 리뷰 관리",
-  "/workspace/profile": "프로필/영업 정보",
-  "/workspace/settings": "워크스페이스 설정",
-};
 
 export function PartnerLayout() {
   const { logout, user } = useAuth();
@@ -67,7 +56,7 @@ export function PartnerLayout() {
   const [notifications, setNotifications] = useState<PartnerNotification[]>([]);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [liveToast, setLiveToast] = useState<PartnerNotification | null>(null);
-  const title = pageTitle[location.pathname] ?? "AURA Workspace";
+  const profileInitial = user?.name?.trim().slice(0, 1) || user?.email?.trim().slice(0, 1).toUpperCase() || "A";
   const chatThreadsQueryKey = useMemo(
     () => ["chat-threads", user?.id, user?.businessId, user?.expertId, user?.workspaceScope] as const,
     [user?.businessId, user?.expertId, user?.id, user?.workspaceScope],
@@ -294,13 +283,13 @@ export function PartnerLayout() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <div className="brand-mark">P</div>
+          <div className="brand-mark">A</div>
           <div className="brand-title">
-            <strong>AURA Workspace</strong>
-            <span>업체/전문가 운영툴</span>
+            <strong>AURA 파트너</strong>
+            <span>상담 운영</span>
           </div>
         </div>
-        <nav className="sidebar-nav" aria-label="워크스페이스 메뉴">
+        <nav className="sidebar-nav" aria-label="상담 운영 메뉴">
           {navItems.map((item) => {
             const Icon = item.icon;
             const badgeCount = item.to === "/workspace/chat"
@@ -326,25 +315,23 @@ export function PartnerLayout() {
             );
           })}
         </nav>
-        <div className="sidebar-footer">
-          <div className="scope-card">
-            <span>현재 워크스페이스</span>
-            <strong>{user ? workspaceScopeLabel[user.workspaceScope] : "로그인 필요"}</strong>
-            <span>{user?.role === "expert" ? "본인 예약/고객만 표시" : "소속 업체의 예약과 고객만 표시"}</span>
-          </div>
-        </div>
       </aside>
 
       <main className="main-area">
         <header className="topbar">
-          <div className="topbar-left">
-            <div className="topbar-title">
-              <strong>{title}</strong>
-              <span>서버 scope 기준으로 내 업체/전문가 데이터만 조회합니다.</span>
-            </div>
-          </div>
+          <button
+            aria-label="프로필 관리로 이동"
+            className="partner-account"
+            type="button"
+            onClick={() => navigate("/workspace/profile")}
+          >
+            <span aria-hidden="true" className="avatar partner-avatar">{profileInitial}</span>
+            <span className="cell-main">
+              <strong>{user?.name || "내 프로필"}</strong>
+              <span>{user?.email}</span>
+            </span>
+          </button>
           <div className="topbar-right">
-            <span className="topbar-meta">Partner API scope</span>
             <div className="notification-center">
               <Button
                 variant="ghost"
@@ -360,11 +347,11 @@ export function PartnerLayout() {
                 ) : null}
               </Button>
               {notificationOpen ? (
-                <div className="notification-panel" role="dialog" aria-label="실시간 알림">
+                <div className="notification-panel" role="dialog" aria-label="알림">
                   <div className="notification-panel-header">
                     <div>
-                      <strong>실시간 알림</strong>
-                      <span>예약·메시지·통화 변경을 모아봅니다.</span>
+                      <strong>알림</strong>
+                      <span>새 예약과 고객 메시지를 확인하세요.</span>
                     </div>
                     <button type="button" aria-label="알림 닫기" onClick={() => setNotificationOpen(false)}>
                       <X size={17} />
@@ -391,13 +378,6 @@ export function PartnerLayout() {
                   </div>
                 </div>
               ) : null}
-            </div>
-            <div className="person-cell">
-              <img className="avatar" src="https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=160&q=80" alt="" />
-              <div className="cell-main">
-                <strong>{user?.name}</strong>
-                <span>{user?.email}</span>
-              </div>
             </div>
             <Button variant="ghost" icon={<LogOut size={17} />} onClick={logout}>
               로그아웃

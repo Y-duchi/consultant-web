@@ -54,9 +54,8 @@ export function ReviewsPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Reviews"
         title="리뷰 관리"
-        description="고객 앱의 전문가 상세 페이지에 노출되는 리뷰를 예약 건, 고객, 전문가와 연결해 확인합니다. 숨김/신고/답글은 현재 UI 상태 변경만 제공합니다."
+        description="고객이 작성한 리뷰를 확인하고 필요한 경우 답글을 남길 수 있습니다."
       />
 
       <div className="filter-bar">
@@ -131,7 +130,7 @@ export function ReviewsPage() {
               <div className="panel-header">
                 <div>
                   <h3>{getCustomerName(selectedReview.customerId)} 고객 리뷰</h3>
-                  <p>완료된 앱 상담 예약과 연결된 리뷰입니다.</p>
+                  <p>완료된 상담 예약과 연결된 리뷰입니다.</p>
                 </div>
                 <ReviewStatusBadge status={selectedReview.status} />
               </div>

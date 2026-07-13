@@ -108,9 +108,8 @@ export function CompletionPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Completion"
-        title="상담 완료 및 AI 요약 리포트"
-        description="화상통화가 종료되면 예약은 자동 완료로 전환되고, 통화 transcript 기반 AI 상담 요약 리포트를 고객 앱으로 전달합니다."
+        title="상담 요약"
+        description="상담 내용을 정리하고 고객에게 전달할 요약과 추천사항을 확인합니다."
       />
 
       {eligibleBookings.length === 0 ? (
@@ -120,8 +119,8 @@ export function CompletionPage() {
           <form className="panel" onSubmit={handleSubmit}>
             <div className="panel-header">
               <div>
-              <h2>통화 종료 후 AI 상담 요약</h2>
-              <p>상담사는 통화 transcript로 생성된 요약을 확인하고 필요한 전문가 코멘트만 덧붙입니다.</p>
+              <h2>AI 상담 요약</h2>
+              <p>상담 내용을 바탕으로 생성된 요약을 확인하고 필요한 코멘트를 덧붙이세요.</p>
               </div>
               {detail ? <BookingStatusBadge status={detail.booking.status} /> : null}
             </div>
@@ -135,8 +134,8 @@ export function CompletionPage() {
                   ))}
                 </SelectInput>
               </Field>
-              <Field label="화상상담 transcript" hint="화상통화 연동 전 v1에서는 테스트용 transcript를 붙여넣으면 예약 완료와 AI 요약 생성이 함께 처리됩니다.">
-                <TextArea value={transcript} onChange={(event) => setTranscript(event.target.value)} placeholder="고객 발화와 전문가 안내를 시간순으로 입력하면 AI 요약본을 생성합니다." />
+              <Field label="상담 내용" hint="요약에 반영할 주요 대화와 안내 내용을 입력해 주세요.">
+                <TextArea value={transcript} onChange={(event) => setTranscript(event.target.value)} placeholder="고객의 고민과 안내한 내용을 입력해 주세요." />
               </Field>
               <Button
                 type="button"
@@ -145,7 +144,7 @@ export function CompletionPage() {
                 disabled={aiSummaryMutation.isPending || !transcript.trim() || !selectedBookingId}
                 onClick={() => aiSummaryMutation.mutate()}
               >
-                {aiSummaryMutation.isPending ? "AI 요약 생성 중" : "통화 종료/AI 요약 생성"}
+                {aiSummaryMutation.isPending ? "AI 요약 생성 중" : "AI 요약 만들기"}
               </Button>
               {aiSummaryMutation.isError ? <div className="form-error">{aiSummaryMutation.error.message}</div> : null}
               <Field label="전문가 추가 코멘트" hint="AI 요약본 맨 아래에 전문가 코멘트로 추가됩니다.">
@@ -159,7 +158,7 @@ export function CompletionPage() {
               </Field>
 
               <section className="settings-section">
-                <strong>앱으로 전달할 리포트 선택</strong>
+                <strong>고객에게 함께 보낼 리포트</strong>
                 {sharedReports.length === 0 ? (
                   <EmptyState title="선택 가능한 리포트가 없습니다" description="고객이 선택한 룩톡/AI 분석/퍼스널컬러 리포트 또는 전문가 작성 결과 리포트가 표시됩니다." />
                 ) : (
@@ -176,7 +175,7 @@ export function CompletionPage() {
                       />
                       <span className="cell-main">
                         <strong>{report.title}</strong>
-                        <span>{report.source === "customer_app" ? "고객이 앱에서 선택한 리포트" : "전문가가 작성한 결과 리포트"}</span>
+                        <span>{report.source === "customer_app" ? "고객이 공유한 리포트" : "전문가가 작성한 결과 리포트"}</span>
                         <span>{report.summary}</span>
                       </span>
                     </label>
@@ -186,30 +185,30 @@ export function CompletionPage() {
 
               <label className="switch-row">
                 <span className="cell-main">
-                  <strong>고객 앱 공개</strong>
-                  <span>공개 요약만 고객 앱에서 조회됩니다.</span>
+                  <strong>고객에게 공개</strong>
+                  <span>켜면 고객이 상담 요약을 확인할 수 있습니다.</span>
                 </span>
                 <input type="checkbox" checked={visibleToCustomer} onChange={(event) => setVisibleToCustomer(event.target.checked)} />
               </label>
 
               <label className="switch-row">
                 <span className="cell-main">
-                  <strong>완료 후 리뷰 요청 상태 추적</strong>
-                  <span>저장 시 리뷰 요청 상태를 sent로 표시합니다.</span>
+                  <strong>리뷰 작성 안내</strong>
+                  <span>상담이 끝난 후 고객에게 리뷰 작성을 안내합니다.</span>
                 </span>
                 <input type="checkbox" checked={sendReviewRequest} onChange={(event) => setSendReviewRequest(event.target.checked)} />
               </label>
             </div>
             <div className="drawer-footer">
               <Button type="submit" variant="primary" icon={<Send size={16} />} disabled={completionMutation.isPending || !customerSummary.trim() || !recommendations.trim()}>
-                앱 전달 상태 저장
+                요약 저장 및 전달
               </Button>
             </div>
           </form>
 
           <aside className="panel">
             <div className="panel-header">
-              <h2>선택 예약 컨텍스트</h2>
+              <h2>예약 정보</h2>
             </div>
             <div className="panel-body settings-section">
               {detailQuery.isLoading ? <LoadingState label="예약 상세를 불러오는 중입니다" /> : null}
@@ -228,12 +227,12 @@ export function CompletionPage() {
                       <dd>{detail.booking.type}</dd>
                     </div>
                     <div className="detail-row">
-                      <dt>앱 사전 질문</dt>
+                      <dt>사전 질문</dt>
                       <dd>{detail.booking.requestMemo}</dd>
                     </div>
                     <div className="detail-row">
                       <dt>리뷰 상태</dt>
-                      <dd>{detail.booking.reviewRequestStatus}</dd>
+                      <dd>{reviewRequestStatusLabel[detail.booking.reviewRequestStatus]}</dd>
                     </div>
                   </dl>
                   {completionMutation.isSuccess ? (
@@ -252,3 +251,10 @@ export function CompletionPage() {
     </>
   );
 }
+
+const reviewRequestStatusLabel = {
+  not_ready: "준비 전",
+  ready: "안내 가능",
+  sent: "안내 완료",
+  reviewed: "리뷰 작성 완료",
+};

@@ -199,7 +199,7 @@ export function BookingsPage() {
       setCallState(null);
       setCallConnectionError("");
       setCallConnectionStatus("connecting");
-      setCallFeedback("Chime 입장 정보가 준비되었습니다. 브라우저 권한을 확인해 주세요.");
+      setCallFeedback("화상 상담을 준비했습니다. 카메라와 마이크 권한을 확인해 주세요.");
       saveChangesMutation.mutate({ bookingId: result.bookingId, changes: { status: "in_progress" } });
     },
     onError: (error) => {
@@ -235,7 +235,7 @@ export function BookingsPage() {
     chimeClientRef.current = null;
     if (!client) return;
     await client.stop().catch((error: unknown) => {
-      setCallConnectionError(error instanceof Error ? error.message : "Chime 미팅 정리에 실패했습니다.");
+      setCallConnectionError(error instanceof Error ? error.message : "화상 상담을 종료하지 못했습니다.");
     });
     setCallConnectionStatus("stopped");
     setIsCallMuted(false);
@@ -385,7 +385,7 @@ export function BookingsPage() {
       onTranscriptResults: handleTranscriptResults,
       onTranscriptionStatus: (status) => {
         if (status.type === "failed") {
-          setCallFeedback(status.message || "Chime 실시간 자막이 실패했습니다.");
+          setCallFeedback(status.message || "실시간 자막을 시작하지 못했습니다.");
         }
       },
     })).then((controller) => {
@@ -398,7 +398,7 @@ export function BookingsPage() {
     }).catch((error: unknown) => {
       if (startGeneration !== chimeStartGenerationRef.current) return;
       chimeStartInFlightRef.current = false;
-      const message = error instanceof Error ? error.message : "Chime 미팅 연결에 실패했습니다.";
+      const message = error instanceof Error ? error.message : "화상 상담 연결에 실패했습니다.";
       setCallConnectionStatus("failed");
       setCallConnectionError(message);
       setCallFeedback(message);
@@ -537,8 +537,7 @@ export function BookingsPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Bookings"
-        title="앱 예약 관리"
+        title="예약 관리"
         description="고객 예약 신청을 검토하고 수락하세요. 확정된 예약만 고객 채팅과 화상통화, AI 요약 리포트로 이어집니다."
         actions={
           <Button variant="secondary" icon={<CalendarRange size={17} />} onClick={() => setAnchorDate(new Date())}>
@@ -637,7 +636,7 @@ export function BookingsPage() {
           <div className="panel-header">
             <div>
               <h2>가능 시간 조정</h2>
-              <p>앱에 노출될 특정 날짜의 가능 시간, 휴무, 점심, 예외 시간을 저장합니다.</p>
+              <p>고객이 예약할 수 있는 시간과 휴무 시간을 날짜별로 설정합니다.</p>
             </div>
           </div>
           <div className="panel-body settings-section">
@@ -656,11 +655,11 @@ export function BookingsPage() {
               </Field>
               <Field label="구분">
                 <SelectInput value={availabilityDraft.kind} onChange={(event) => setAvailabilityDraft((prev) => ({ ...prev, kind: event.target.value as AvailabilitySlot["kind"] }))}>
-                  <option value="available">가능</option>
-                  <option value="lunch">점심</option>
-                  <option value="blocked">차단</option>
-                  <option value="holiday">휴무</option>
-                  <option value="exception">예외</option>
+                  <option value="available">예약 가능</option>
+                  <option value="lunch">점심시간</option>
+                  <option value="blocked">예약 불가</option>
+                  <option value="holiday">휴무일</option>
+                  <option value="exception">기타</option>
                 </SelectInput>
               </Field>
               <Field label="시작">
@@ -693,7 +692,7 @@ export function BookingsPage() {
                 <div className="availability-item" key={slot.id}>
                   <div className="thread-meta">
                     <strong>{slot.startsAt} - {slot.endsAt}</strong>
-                    <span className="tag">{slot.kind}</span>
+                    <span className="tag">{availabilityKindLabel[slot.kind]}</span>
                   </div>
                   <span className="muted">{slot.note || "메모 없음"}</span>
                 </div>
@@ -779,11 +778,11 @@ export function BookingsPage() {
 
             <section className="panel">
               <div className="panel-header">
-                <h3>고객이 앱에서 선택한 전달 리포트</h3>
+                <h3>고객이 공유한 리포트</h3>
               </div>
               <div className="panel-body report-list">
                 {selectedDetail.sharedReports.length === 0 ? (
-                  <EmptyState title="선택된 리포트 없음" description="고객이 앱에서 룩톡/AI 분석/퍼스널컬러 리포트를 선택하면 여기에 표시됩니다." />
+                  <EmptyState title="공유된 리포트 없음" description="고객이 상담에 필요한 리포트를 공유하면 여기에 표시됩니다." />
                 ) : (
                   selectedDetail.sharedReports.map((report) => (
                     <AppReportCard
@@ -938,11 +937,11 @@ export function BookingsPage() {
                   {selectedDetail.booking.channel === "video" && (canJoinVideoCall(previewBooking) || callJoinResult) ? (
                     <div className="workflow-call-card">
                       <span>화상 상담</span>
-                      <strong>{callJoinResult ? getCallConnectionLabel(callConnectionStatus) : "Chime 입장 전"}</strong>
+                      <strong>{callJoinResult ? getCallConnectionLabel(callConnectionStatus) : "상담 시작 전"}</strong>
                       <p>
                         {callConnectionError ||
                           callFeedback ||
-                          "상담 시작을 누르면 예약 확정 여부와 입장 가능 시간을 확인한 뒤 Chime 미팅/참가자 정보를 발급합니다."}
+                          "상담 시작을 누르면 카메라와 마이크를 확인한 뒤 고객과 연결합니다."}
                       </p>
                       <div className="workflow-call-language">
                         <Field label="번역 방향">
@@ -1020,7 +1019,6 @@ export function BookingsPage() {
                               )
                             ) : null}
                           </div>
-                          <small>세션 {callJoinResult.callSessionId.slice(0, 8)}</small>
                         </>
                       ) : canJoinVideoCall(previewBooking) ? (
                         <Button
@@ -1029,7 +1027,7 @@ export function BookingsPage() {
                           onClick={() => joinCallMutation.mutate(selectedDetail.booking)}
                           disabled={joinCallMutation.isPending}
                         >
-                          {joinCallMutation.isPending ? "입장 준비 중" : "Chime 입장"}
+                          {joinCallMutation.isPending ? "상담 준비 중" : "상담 시작"}
                         </Button>
                       ) : null}
                     </div>
@@ -1485,13 +1483,21 @@ function getBookingSaveFeedback(booking: Booking) {
 }
 
 function getCallConnectionLabel(status: string) {
-  if (status === "connecting") return "Chime 연결 중";
+  if (status === "connecting") return "연결 중";
   if (status === "failed") return "연결 실패";
   if (status === "stopped") return "통화 종료됨";
   if (status.includes("시작")) return "화상 상담 연결됨";
   if (status.includes("종료")) return "통화 종료됨";
-  return "Chime 입장 준비 완료";
+  return "상담 준비 완료";
 }
+
+const availabilityKindLabel: Record<AvailabilitySlot["kind"], string> = {
+  available: "예약 가능",
+  blocked: "예약 불가",
+  lunch: "점심시간",
+  holiday: "휴무일",
+  exception: "기타",
+};
 
 function getCallTranscriptionLabel(status: string, mode: string) {
   if (status === "disabled") return "자막 꺼짐";

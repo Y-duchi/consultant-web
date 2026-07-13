@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarOff, CheckCircle2, Clock3, Plug, Save, X } from "lucide-react";
+import { CalendarOff, CheckCircle2, Clock3, Save, X } from "lucide-react";
 import { getBusinessProfile, getSettings, updateBusinessProfile, updateSettings } from "../../services/api";
 import { useAuth } from "../auth/AuthContext";
-import { Badge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
 import { Field, SelectInput, TextArea, TextInput } from "../../shared/ui/Field";
 import { PageHeader } from "../../shared/ui/PageHeader";
@@ -56,7 +55,6 @@ export function SettingsPage() {
 
   const operatingHours = settingsDraft.operatingHours ?? [];
   const notification = settingsDraft.notification;
-  const integrations = settingsDraft.integrations;
   const temporaryBlocks = settingsDraft.temporaryBookingBlocks ?? [];
   const saveSettings = () => {
     setSettingsFeedback(null);
@@ -83,9 +81,8 @@ export function SettingsPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Settings"
         title="운영 설정"
-        description="상담 기본 영업시간, 휴무일, 정책 문구, 알림, 계정 권한과 향후 전화/SMS/채팅 연동 지점을 관리합니다."
+        description="예약 가능 시간과 휴무일, 취소·환불 정책, 알림 수신 여부를 관리합니다."
       />
 
       <div className="grid-2">
@@ -234,7 +231,7 @@ export function SettingsPage() {
                 <label className="switch-row" key={key}>
                   <span className="cell-main">
                     <strong>{notificationLabel[key as keyof typeof notification]}</strong>
-                    <span>추후 이메일, 앱 푸시, SMS로 분기할 수 있습니다.</span>
+                    <span>이 알림을 받을지 선택할 수 있습니다.</span>
                   </span>
                   <input
                     type="checkbox"
@@ -257,80 +254,6 @@ export function SettingsPage() {
         </section>
       </div>
 
-      <div className="grid-2 section-gap">
-        <section className="panel">
-          <div className="panel-header">
-            <h2>계정/권한 관리</h2>
-          </div>
-          <div className="panel-body">
-            <div className="table-wrap">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>이름</th>
-                    <th>이메일</th>
-                    <th>역할</th>
-                    <th>범위</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(settingsDraft.accountRoles ?? []).map((account) => (
-                    <tr key={account.id}>
-                      <td>{account.name}</td>
-                      <td>{account.email}</td>
-                      <td><Badge tone="info">{account.role}</Badge></td>
-                      <td>{account.scope}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="panel-header">
-            <div>
-              <h2>전화/SMS/채팅 연동</h2>
-              <p>실제 키와 provider 연결은 백엔드 붙일 때 활성화합니다.</p>
-            </div>
-            <Plug size={18} />
-          </div>
-          <div className="panel-body settings-section">
-            {integrations ? (
-              <>
-                <Field label="전화 Provider">
-                  <SelectInput value={integrations.phoneProvider} onChange={(event) => setSettingsDraft((prev) => ({ ...prev, integrations: { ...integrations, phoneProvider: event.target.value as typeof integrations.phoneProvider } }))}>
-                    <option value="none">미연동</option>
-                    <option value="twilio">Twilio</option>
-                    <option value="pinpoint">AWS Pinpoint</option>
-                    <option value="sens">Naver Cloud SENS</option>
-                  </SelectInput>
-                </Field>
-                <Field label="SMS Provider">
-                  <SelectInput value={integrations.smsProvider} onChange={(event) => setSettingsDraft((prev) => ({ ...prev, integrations: { ...integrations, smsProvider: event.target.value as typeof integrations.smsProvider } }))}>
-                    <option value="none">미연동</option>
-                    <option value="twilio">Twilio</option>
-                    <option value="pinpoint">AWS Pinpoint</option>
-                    <option value="sens">Naver Cloud SENS</option>
-                  </SelectInput>
-                </Field>
-                <Field label="채팅 Provider">
-                  <SelectInput value={integrations.chatProvider} onChange={(event) => setSettingsDraft((prev) => ({ ...prev, integrations: { ...integrations, chatProvider: event.target.value as typeof integrations.chatProvider } }))}>
-                    <option value="local_test">로컬 테스트 서비스</option>
-                    <option value="websocket">FastAPI WebSocket</option>
-                    <option value="firebase">Firebase</option>
-                    <option value="sendbird">Sendbird</option>
-                    <option value="stream">Stream</option>
-                  </SelectInput>
-                </Field>
-                <SaveSettingsButton isPending={settingsMutation.isPending} label="연동 설정 저장" onClick={saveSettings} />
-                <SettingsFeedback isError={settingsMutation.isError} message={settingsFeedback} />
-              </>
-            ) : null}
-          </div>
-        </section>
-      </div>
     </>
   );
 }

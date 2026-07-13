@@ -167,7 +167,7 @@ async function requestPartnerJson<T>(
   const token = getPartnerSessionToken();
   if (needsAuth) {
     if (!token) {
-      throw new Error("파트너 세션이 없습니다. 다시 로그인해 주세요.");
+      throw new Error("로그인 정보가 만료되었습니다. 다시 로그인해 주세요.");
     }
     headers.set("Authorization", `Bearer ${token}`);
   }
@@ -182,10 +182,10 @@ async function requestPartnerJson<T>(
   const envelope = (await response.json().catch(() => null)) as PartnerApiEnvelope<T> | null;
   if (!response.ok || envelope?.error) {
     const payload = envelope as (PartnerApiEnvelope<T> & { detail?: string }) | null;
-    throw new Error(payload?.error?.message || payload?.detail || "파트너 백엔드 요청에 실패했습니다.");
+    throw new Error(payload?.error?.message || payload?.detail || "요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.");
   }
   if (!envelope || envelope.data === null) {
-    throw new Error("파트너 백엔드 응답이 비어 있습니다.");
+    throw new Error("정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
   }
   return envelope.data;
 }
@@ -222,7 +222,7 @@ function unwrapApiEnvelope<T>(payload: unknown): T {
   if (payload && typeof payload === "object" && "data" in payload) {
     const envelope = payload as PartnerApiEnvelope<T>;
     if (envelope.error) {
-      throw new Error(envelope.error.message || "백엔드 요청에 실패했습니다.");
+      throw new Error(envelope.error.message || "요청을 처리하지 못했습니다.");
     }
     return envelope.data as T;
   }
@@ -1178,7 +1178,7 @@ export async function getCustomerDetail(customerId: string, user?: AuthUser): Pr
   const customer = findCustomer(customerId);
   const customerBookings = applyUserScope(bookings, user).filter((booking) => booking.customerId === customerId);
   if (!canAccessAllData(user) && customerBookings.length === 0) {
-    throw new Error("이 고객은 현재 워크스페이스에서 조회할 수 없습니다.");
+    throw new Error("이 고객 정보를 조회할 권한이 없습니다.");
   }
   const scopedBookingIds = new Set(customerBookings.map((booking) => booking.id));
   const scopedExpertIds = new Set(customerBookings.map((booking) => booking.expertId));
@@ -1501,7 +1501,7 @@ export async function joinBookingCall(
   }
   await delay(160);
   findBooking(bookingId, user);
-  throw new Error("로컬 목업에서는 Chime 화상상담 입장을 지원하지 않습니다.");
+  throw new Error("현재 환경에서는 화상 상담을 시작할 수 없습니다.");
 }
 
 export async function endBookingCall(
@@ -1719,7 +1719,7 @@ export async function generateConsultationSummary(
   if (shouldUsePartnerApi(user)) {
     const transcript = input.transcript?.trim() ?? "";
     if (!transcript) {
-      throw new Error("AI 요약 생성을 위해 화상상담 transcript가 필요합니다.");
+      throw new Error("AI 요약을 만들려면 상담 내용을 입력해 주세요.");
     }
     const result = await requestPartnerJson<SummaryGenerateResult>(
       `/summaries/${encodeURIComponent(bookingId)}/generate`,
@@ -1740,7 +1740,7 @@ export async function generateConsultationSummary(
   const internalMemo = input.internalMemo?.trim() ?? "";
   const sourceText = transcript;
   if (!sourceText) {
-    throw new Error("AI 요약 생성을 위해 화상상담 transcript가 필요합니다.");
+    throw new Error("AI 요약을 만들려면 상담 내용을 입력해 주세요.");
   }
 
   const job: ConsultationSummaryJob = {
@@ -1759,7 +1759,7 @@ export async function generateConsultationSummary(
 
   if (/fail|실패/i.test(sourceText)) {
     job.status = "failed";
-    job.errorMessage = "OpenAI summary generation failed for retry-path validation.";
+    job.errorMessage = "AI 요약을 생성하지 못했습니다. 다시 시도해 주세요.";
     job.updatedAt = nowIso();
     throw new Error("AI 요약 생성에 실패했습니다. 상담 메모를 확인한 뒤 다시 시도하세요.");
   }
@@ -1867,7 +1867,7 @@ export async function updateExpertProfile(expertId: string, patch: Partial<Exper
   const expert = experts.find((item) => item.id === expertId);
   if (!expert) throw new Error("전문가를 찾을 수 없습니다.");
   if (!canAccessAllData(user) && expert.businessId !== user?.businessId) {
-    throw new Error("현재 워크스페이스의 전문가만 수정할 수 있습니다.");
+    throw new Error("이 전문가 정보를 수정할 권한이 없습니다.");
   }
   Object.assign(expert, patch);
   return clone(expert);
@@ -2202,7 +2202,7 @@ function findBooking(bookingId: string, user?: AuthUser) {
   const booking = bookings.find((item) => item.id === bookingId);
   if (!booking) throw new Error("예약을 찾을 수 없습니다.");
   if (!canAccessAllData(user) && !applyUserScope([booking], user).some((item) => item.id === booking.id)) {
-    throw new Error("현재 워크스페이스에서 접근할 수 없는 예약입니다.");
+    throw new Error("이 예약을 확인할 권한이 없습니다.");
   }
   return booking;
 }
@@ -2217,7 +2217,7 @@ function findThread(threadId: string, user?: AuthUser) {
   const thread = chatThreads.find((item) => item.id === threadId);
   if (!thread) throw new Error("대화방을 찾을 수 없습니다.");
   if (!canAccessAllData(user) && !applyChatUserScope([thread], user).some((item) => item.id === thread.id)) {
-    throw new Error("현재 워크스페이스에서 접근할 수 없는 대화방입니다.");
+    throw new Error("이 대화를 확인할 권한이 없습니다.");
   }
   return thread;
 }
@@ -2312,7 +2312,7 @@ function ensureBusinessFromApplication(application: PartnerApplication, business
     ownerName: application.ownerName,
     businessRegistrationNumber: application.businessRegistrationNumber,
     phone: application.phone,
-    address: "승인 후 업체가 워크스페이스에서 입력 예정",
+    address: "주소를 입력해 주세요.",
     description: application.introduction,
     photos: [],
     exposureStatus: "pending_review",

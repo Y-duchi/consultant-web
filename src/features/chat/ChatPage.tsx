@@ -131,11 +131,11 @@ export function ChatPage() {
         });
         setCallStatus("화상통화 방이 열렸습니다. 고객의 입장을 기다리고 있습니다.");
       } catch (error) {
-        setCallError(error instanceof Error ? error.message : "Chime 화상통화 연결에 실패했습니다.");
+        setCallError(error instanceof Error ? error.message : "화상 상담 연결에 실패했습니다.");
       }
     },
     onError: (error) => {
-      setCallError(error instanceof Error ? error.message : "Chime 미팅 생성에 실패했습니다.");
+      setCallError(error instanceof Error ? error.message : "화상 상담을 시작하지 못했습니다.");
     },
   });
 
@@ -413,7 +413,7 @@ export function ChatPage() {
       return;
     }
     setCallError("");
-    setCallStatus("Chime 화상통화 방을 만드는 중입니다.");
+    setCallStatus("화상 상담을 준비하는 중입니다.");
     setCallCaptions([]);
     setCallTranslationActive(false);
     callTranslationActiveRef.current = false;
@@ -504,9 +504,8 @@ export function ChatPage() {
     <div className="chat-page">
       <div className="chat-page-intro">
         <PageHeader
-          eyebrow="Communication"
           title="고객 대화"
-          description="확정된 예약의 고객 채팅과 앱 얼굴 리포트, 내부 메모를 함께 보며 상담을 이어갑니다."
+          description="확정된 예약의 고객과 대화하고, 고객이 공유한 리포트와 상담 메모를 함께 확인합니다."
         />
         {realtimeNotice ? (
           <div className="realtime-toast" role="status">
@@ -762,7 +761,7 @@ export function ChatPage() {
               <span>{callVideoEnabled ? "내 화면" : "카메라 꺼짐"}</span>
             </div>
             <audio ref={callAudioRef} autoPlay />
-            {joinCallMutation.isPending ? <div className="chat-call-wait">Chime 화상통화 방을 만드는 중…</div> : null}
+            {joinCallMutation.isPending ? <div className="chat-call-wait">화상 상담을 준비하는 중…</div> : null}
             {callCaptions.length > 0 ? (
               <div className="chat-call-captions" aria-live="polite">
                 {callCaptions.slice(-2).map((caption) => (

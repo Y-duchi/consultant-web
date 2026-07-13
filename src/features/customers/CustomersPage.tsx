@@ -74,9 +74,8 @@ export function CustomersPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Customers"
         title="고객 리포트 관리"
-        description="고객이 앱에서 선택한 AI 뷰티 리포트, 예약 이력, 처방 노트, 내부 메모와 자료 첨부 이력을 드로어에서 확인합니다."
+        description="고객이 공유한 뷰티 리포트와 예약 이력, 상담 기록, 첨부 자료를 상세 화면에서 확인합니다."
       />
 
       <div className="filter-bar customer-filter-bar">
