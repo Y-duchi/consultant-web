@@ -91,7 +91,7 @@ export function LoginPage() {
                 <KeyRound size={18} />
                 <div>
                   <strong>승인 전 이메일로 로그인하면 심사 상태 화면으로 이동합니다</strong>
-                  <span>등록된 프리랜서별 발급 계정으로 로그인하면 실제 앱 예약·고객·채팅 데이터가 표시됩니다.</span>
+                  <span>발급받은 계정으로 로그인하면 예약·고객·채팅 내역을 확인할 수 있습니다.</span>
                 </div>
               </div>
             ) : null}
@@ -101,9 +101,6 @@ export function LoginPage() {
             </Button>
           </form>
         )}
-        <div className="login-footer">
-          파트너와 관리자 화면은 FastAPI 백엔드의 실제 운영 데이터를 기준으로 표시됩니다.
-        </div>
       </section>
     </main>
   );

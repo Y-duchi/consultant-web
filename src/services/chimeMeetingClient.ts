@@ -90,7 +90,7 @@ export function createChimeMeetingClient(
         });
         options.onStatusChange?.("connected");
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Chime 미팅을 시작하지 못했습니다.";
+        const message = error instanceof Error ? error.message : "화상 상담을 시작하지 못했습니다.";
         options.onStatusChange?.("failed");
         options.onError?.(message);
         throw error;
@@ -123,8 +123,8 @@ export async function startWebChimeMeeting(
   audioVideo.setVideoMaxBandwidthKbps(2500);
 
   const observer: AudioVideoObserver = {
-    audioVideoDidStart: () => elements.onStatusChange?.("Chime 미디어 세션이 시작됐습니다."),
-    audioVideoDidStop: () => elements.onStatusChange?.("Chime 미디어 세션이 종료됐습니다."),
+    audioVideoDidStart: () => elements.onStatusChange?.("화상 상담이 연결되었습니다."),
+    audioVideoDidStop: () => elements.onStatusChange?.("화상 상담이 종료되었습니다."),
     videoTileDidUpdate: (tileState: VideoTileState) => {
       if (!tileState.tileId || tileState.isContent) return;
       const videoElement = tileState.localTile ? elements.localVideoElement : elements.remoteVideoElement;
@@ -223,7 +223,7 @@ function assertJoinCredentials(joinResult: ConsultingCallJoinResult) {
   const attendeeId = joinResult.attendee.AttendeeId;
   const joinToken = joinResult.attendee.JoinToken;
   if (typeof meetingId !== "string" || !meetingId || typeof attendeeId !== "string" || !attendeeId || typeof joinToken !== "string" || !joinToken) {
-    throw new Error("화상상담 입장 정보가 올바르지 않습니다. 서버의 Chime 설정과 예약 상태를 확인해 주세요.");
+    throw new Error("화상 상담 연결 정보가 올바르지 않습니다. 예약 상태를 확인한 뒤 다시 시도해 주세요.");
   }
 }
 

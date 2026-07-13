@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ImagePlus, Save, Upload } from "lucide-react";
-import { getBusinessProfile, getExperts, updateBusinessProfile, updateExpertProfile, uploadBusinessVerificationMock, uploadCredentialMock } from "../../services/api";
+import { Save } from "lucide-react";
+import { getBusinessProfile, getExperts, updateBusinessProfile, updateExpertProfile } from "../../services/api";
 import { useAuth } from "../auth/AuthContext";
 import { BusinessVerificationBadge, ExposureStatusBadge } from "../../shared/ui/Badge";
 import { Button } from "../../shared/ui/Button";
@@ -19,8 +19,6 @@ export function ProfilePage() {
   const [businessDraft, setBusinessDraft] = useState<Partial<BusinessProfile>>({});
   const [selectedExpertId, setSelectedExpertId] = useState("");
   const [expertDraft, setExpertDraft] = useState<Partial<Expert>>({});
-  const [credentialName, setCredentialName] = useState("퍼스널컬러 컨설턴트 자격증.jpg");
-  const [businessVerificationFile, setBusinessVerificationFile] = useState("사업자등록증_AURA성수.pdf");
 
   useEffect(() => {
     if (businessQuery.data) setBusinessDraft(businessQuery.data);
@@ -46,25 +44,15 @@ export function ProfilePage() {
     mutationFn: () => updateExpertProfile(selectedExpertId, expertDraft, user ?? undefined),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["experts"] }),
   });
-  const uploadMutation = useMutation({
-    mutationFn: () => uploadCredentialMock(selectedExpertId, credentialName),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["experts"] }),
-  });
-  const businessVerificationMutation = useMutation({
-    mutationFn: () => uploadBusinessVerificationMock(businessVerificationFile, user ?? undefined),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["business-profile"] }),
-  });
-
-  if (businessQuery.isLoading || expertsQuery.isLoading) return <LoadingState label="파트너와 전문가 정보를 불러오는 중입니다" />;
+  if (businessQuery.isLoading || expertsQuery.isLoading) return <LoadingState label="업체와 전문가 정보를 불러오는 중입니다" />;
   if (businessQuery.isError) return <ErrorState message={businessQuery.error.message} onRetry={() => businessQuery.refetch()} />;
   if (expertsQuery.isError) return <ErrorState message={expertsQuery.error.message} onRetry={() => expertsQuery.refetch()} />;
 
   return (
     <>
       <PageHeader
-        eyebrow="Profiles"
-        title="파트너 등록, 인증 및 전문가 프로필"
-        description="고객 앱에 노출될 업체/프리랜서 정보와 전문가 프로필, 사업자 인증, 상담 가격과 카테고리를 관리합니다."
+        title="업체 및 전문가 프로필"
+        description="고객에게 보여지는 업체 정보와 전문가 소개, 상담 가격을 관리합니다."
       />
 
       <div className="profile-layout">
@@ -72,7 +60,7 @@ export function ProfilePage() {
           <div className="panel-header">
             <div>
               <h2>업체 정보</h2>
-              <p>고객 앱 전문가 목록과 결제 화면에 노출될 파트너 정보입니다.</p>
+              <p>고객의 전문가 목록과 예약 화면에 표시되는 정보입니다.</p>
             </div>
             <div className="tag-list">
               {businessQuery.data ? <BusinessVerificationBadge status={businessQuery.data.verificationStatus} /> : null}
@@ -86,7 +74,7 @@ export function ProfilePage() {
             <Field label="업체명">
               <TextInput value={businessDraft.name ?? ""} onChange={(event) => setBusinessDraft((prev) => ({ ...prev, name: event.target.value }))} />
             </Field>
-            <Field label="파트너 유형">
+            <Field label="운영 형태">
               <SelectInput value={businessDraft.partnerType ?? "business"} onChange={(event) => setBusinessDraft((prev) => ({ ...prev, partnerType: event.target.value as PartnerType }))}>
                 <option value="business">사업자 업체</option>
                 <option value="freelancer">프리랜서 전문가</option>
@@ -111,38 +99,30 @@ export function ProfilePage() {
               <SelectInput value={businessDraft.exposureStatus ?? "public"} onChange={(event) => setBusinessDraft((prev) => ({ ...prev, exposureStatus: event.target.value as ExposureStatus }))}>
                 <option value="public">공개</option>
                 <option value="private">비공개</option>
-                <option value="pending_review">검수중</option>
+                {businessDraft.exposureStatus === "pending_review" ? <option value="pending_review" disabled>검토 중</option> : null}
               </SelectInput>
             </Field>
             <Button variant="primary" icon={<Save size={16} />} onClick={() => businessMutation.mutate()}>
               업체 정보 저장
             </Button>
 
-            <section className="panel">
-              <div className="panel-header">
+            <section className="profile-subsection">
+              <div className="profile-subsection-header">
                 <div>
-                  <h3>사업자/파트너 인증</h3>
-                  <p>실제 업체 여부를 확인하기 위한 증빙 제출 영역입니다.</p>
+                  <h3>제출 서류</h3>
+                  <p>입점 신청 때 제출한 사업자 및 자격 확인 서류입니다.</p>
                 </div>
                 {businessQuery.data ? <BusinessVerificationBadge status={businessQuery.data.verificationStatus} /> : null}
               </div>
-              <div className="panel-body settings-section">
-                <div className="form-grid">
-                  <Field label="증빙 파일명">
-                    <TextInput value={businessVerificationFile} onChange={(event) => setBusinessVerificationFile(event.target.value)} />
-                  </Field>
-                  <Button variant="secondary" icon={<Upload size={16} />} onClick={() => businessVerificationMutation.mutate()} disabled={!businessVerificationFile.trim()}>
-                    인증 서류 Mock 제출
-                  </Button>
-                </div>
-                <div className="attachment-list">
-                  {businessQuery.data?.verificationDocuments.map((document) => (
+              <div className="attachment-list">
+                {businessQuery.data?.verificationDocuments.length ? (
+                  businessQuery.data.verificationDocuments.map((document) => (
                     <div className="attachment-item" key={document.id}>
                       <strong>{document.name}</strong>
-                      <p>{formatDate(document.uploadedAt)} · 추후 사업자 OCR/S3 presigned URL 업로드로 교체</p>
+                      <p>{formatDate(document.uploadedAt)} 제출</p>
                     </div>
-                  ))}
-                </div>
+                  ))
+                ) : <p className="muted">제출된 서류가 없습니다.</p>}
               </div>
             </section>
           </div>
@@ -152,7 +132,7 @@ export function ProfilePage() {
           <div className="panel-header">
             <div>
               <h2>전문가 프로필</h2>
-              <p>고객 앱의 전문가 선택, 상세 프로필, 가격 카드에 노출됩니다.</p>
+              <p>고객이 전문가를 선택하고 예약할 때 표시되는 정보입니다.</p>
             </div>
             <SelectInput className="narrow" value={selectedExpertId} onChange={(event) => setSelectedExpertId(event.target.value)}>
               {expertsQuery.data?.map((expert) => (
@@ -185,7 +165,7 @@ export function ProfilePage() {
                     <TextInput value={expertDraft.roleLabel ?? ""} onChange={(event) => setExpertDraft((prev) => ({ ...prev, roleLabel: event.target.value }))} />
                   </Field>
                   <div className="span-2">
-                    <Field label="앱 프로필 한 줄 소개">
+                    <Field label="프로필 한 줄 소개">
                       <TextInput value={expertDraft.tagline ?? ""} onChange={(event) => setExpertDraft((prev) => ({ ...prev, tagline: event.target.value }))} />
                     </Field>
                   </div>
@@ -202,7 +182,7 @@ export function ProfilePage() {
                     <SelectInput value={expertDraft.exposureStatus ?? "public"} onChange={(event) => setExpertDraft((prev) => ({ ...prev, exposureStatus: event.target.value as ExposureStatus }))}>
                       <option value="public">공개</option>
                       <option value="private">비공개</option>
-                      <option value="pending_review">검수중</option>
+                      {expertDraft.exposureStatus === "pending_review" ? <option value="pending_review" disabled>검토 중</option> : null}
                     </SelectInput>
                   </Field>
                   <div className="span-2">
@@ -225,31 +205,22 @@ export function ProfilePage() {
                   전문가 프로필 저장
                 </Button>
 
-                <section className="panel">
-                  <div className="panel-header">
+                <section className="profile-subsection">
+                  <div className="profile-subsection-header">
                     <div>
-                      <h3>자격증/수료증 이미지</h3>
-                      <p>현재는 파일 업로드 API 연결 전이라 실제 파일은 전송하지 않습니다.</p>
+                      <h3>자격증 및 수료증</h3>
+                      <p>등록된 전문 자격과 수료 내역입니다.</p>
                     </div>
-                    <ImagePlus size={18} />
                   </div>
-                  <div className="panel-body settings-section">
-                    <div className="form-grid">
-                      <Field label="업로드 파일명">
-                        <TextInput value={credentialName} onChange={(event) => setCredentialName(event.target.value)} />
-                      </Field>
-                      <Button variant="secondary" icon={<Upload size={16} />} onClick={() => uploadMutation.mutate()} disabled={!credentialName.trim()}>
-                        Mock 업로드
-                      </Button>
-                    </div>
-                    <div className="attachment-list">
-                      {selectedExpert.credentials.map((credential) => (
+                  <div className="attachment-list">
+                    {selectedExpert.credentials.length ? (
+                      selectedExpert.credentials.map((credential) => (
                         <div className="attachment-item" key={credential.id}>
                           <strong>{credential.name}</strong>
-                          <p>{formatDate(credential.uploadedAt)} · S3 presigned URL 교체 예정</p>
+                          <p>{formatDate(credential.uploadedAt)} 등록</p>
                         </div>
-                      ))}
-                    </div>
+                      ))
+                    ) : <p className="muted">등록된 자격증이나 수료증이 없습니다.</p>}
                   </div>
                 </section>
               </>
