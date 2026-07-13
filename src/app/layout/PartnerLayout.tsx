@@ -117,7 +117,7 @@ export function PartnerLayout() {
     if (isRead) return;
     setLiveToast(nextNotification);
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = window.setTimeout(() => setLiveToast(null), 6500);
+    toastTimerRef.current = window.setTimeout(() => setLiveToast(null), 5000);
     playPartnerNotificationSound(notification.kind);
   }, [user?.id]);
 
@@ -416,7 +416,7 @@ export function PartnerLayout() {
               openNotification(liveToast, navigate, setNotificationOpen);
             }}
           >
-            <Bell size={19} />
+            <Bell aria-hidden="true" size={16} />
             <span>
               <strong>{liveToast.title}</strong>
               <small>{liveToast.description}</small>
