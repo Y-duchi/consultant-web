@@ -913,10 +913,25 @@ export function BookingsPage() {
                       </Button>
                     </div>
                   ) : (
-                    <div className="workflow-next-card is-muted">
-                      <span>처리 결과</span>
-                      <strong>{previewBooking.status === "cancelled" ? "예약 취소 기록" : "상담 완료"}</strong>
-                      <p>{previewBooking.status === "cancelled" ? "고객이 취소한 예약입니다. 삭제하지 않고 확인 기록으로 보관합니다." : "상담과 후속 처리가 완료된 예약입니다."}</p>
+                    <div className={previewBooking.status === "completed" ? "workflow-next-card" : "workflow-next-card is-muted"}>
+                      <div>
+                        <span>처리 결과</span>
+                        <strong>{previewBooking.status === "completed" ? "상담 완료" : bookingStatusLabel[previewBooking.status]}</strong>
+                        <p>
+                          {previewBooking.status === "completed"
+                            ? "상담은 완료됐지만 기존 채팅에서 후속 안내를 계속할 수 있습니다."
+                            : "예약 내역과 기존 대화는 고객·전문가의 확인 기록으로 보관됩니다."}
+                        </p>
+                      </div>
+                      {isBookingVisibleInChat(previewBooking) ? (
+                        <Button
+                          variant="secondary"
+                          icon={<MessageSquareText size={16} />}
+                          onClick={() => navigate(`/workspace/chat?bookingId=${selectedDetail.booking.id}`)}
+                        >
+                          {previewBooking.status === "completed" ? "후속 메시지 보기" : "대화 기록 보기"}
+                        </Button>
+                      ) : null}
                     </div>
                   )}
 
